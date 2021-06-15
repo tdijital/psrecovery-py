@@ -1,0 +1,13 @@
+
+# VSCode settings.
+.vscode/
+# Log files
+*.log
+# Scan files
+directs.txt
+directories.txt
+inodes.txt
+# Backup your scan files in this folder
+scans/
+
+
