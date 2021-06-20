@@ -428,7 +428,7 @@ class Scanner2:
                 tables.update(self._get_all_offsets(node, key))
         return tables
 
-    def scan(self):
+    def scan(self, loadpath):
         # self._inodes = self._find_inodes()
         # self._directs = self._find_directs()
         # return self._directs
@@ -444,7 +444,7 @@ class Scanner2:
 
         loaded_from_file = False
 
-        if os.path.exists('inodes.txt') and os.path.exists('directories.txt'):
+        if os.path.exists(loadpath + '\\inodes.txt') and os.path.exists(loadpath + '\\directories.txt'):
             # Load offsets from previous results that have been stored in the above two txt files
             # Inodes.txt has offsets to all inodes
             # Directs.txt has offsets to all directs
@@ -452,10 +452,10 @@ class Scanner2:
             # into the inodes_found and directs_found variables
             print("Loading from files")
             inodes_list = []
-            with open('inodes.txt', 'r') as fp:
+            with open(loadpath + '\\inodes.txt', 'r') as fp:
                 inodes_list = fp.readlines()
             directories = []
-            with open('directories.txt', 'r') as fp:
+            with open(loadpath + '\\directories.txt', 'r') as fp:
                 directories = fp.readlines()
             # directs_list = []
             # with open('directs.txt', 'r') as fp:
@@ -489,6 +489,7 @@ class Scanner2:
             loaded_from_file = True
         else:
             # There are no saved results, let's start a new scan
+            print(f"No previous scan found in {loadpath}")
             print("Scanning drive")
             assert(ctypes.sizeof(Direct) == 0x8)
             assert(ctypes.sizeof(Inode) == 0x100)
@@ -578,14 +579,16 @@ class Scanner2:
         print("Finished scanning. Now analyzing...")
 
         # Save the offsets to files so we don't have to go through the entire disk again
+        if not os.path.exists(loadpath + "\\"):
+            os.mkdir(loadpath + "\\")
         if not loaded_from_file:
-            with open('inodes.txt', 'w') as fp:
+            with open(loadpath + '\\inodes.txt', 'w') as fp:
                 for inode in inodeMap:
                     fp.write(f"{inode}\n")
-            with open('directs.txt', 'w') as fp:
+            with open(loadpath + '\\directs.txt', 'w') as fp:
                 for direct in directsList:
                     fp.write(f"{direct}\n")
-            with open('directories.txt', 'w') as fp:
+            with open(loadpath + '\\directories.txt', 'w') as fp:
                 for directory in directoryMap:
                     fp.write(f"{directory}\n")
 
@@ -1089,11 +1092,12 @@ class App(tk.Frame):
 
                 blocks = []
                 file_bytes = bytearray()
+                inode = node.get_inode()
 
                 # If an inode exists read the inodes blocks
-                if node.get_inode() is not None:
+                if inode is not None:
                     # Read direct blocks
-                    for block in node.get_inode().db:
+                    for block in inode.db:
                         if block == 0:
                             break
                         if block > self.max_block_index:
@@ -1102,28 +1106,29 @@ class App(tk.Frame):
                         blocks.append(block)
                     
                     # Read indirect blocks
-                    if node.get_inode().ib[0] > 0:
-                        btable_index = node.get_inode().ib[0]
+                    if inode.ib[0] > 0:
+                        btable_index = inode.ib[0]
                         if btable_index > self.max_block_index:
                             print(f"Warning invalid block table index for: {self.tree.item(item)['text']} ")
                         else:
                             blocks += self.read_block_indexes(btable_index)
-                    if node.get_inode().ib[1] > 0:
-                        ib_table_index = node.get_inode().ib[1]
+                    if inode.ib[1] > 0:
+                        ib_table_index = inode.ib[1]
                         if ib_table_index > self.max_block_index:
                             print(f"Warning invalid indirect block table index for: {self.tree.item(item)['text']} ")
                         else:
                             ib_table = self.read_block_indexes(ib_table_index)
                             for btable_index in ib_table:
                                 blocks += self.read_block_indexes(btable_index)
-                    if node.get_inode().ib[2] > 0:
-                        ib_ib_table_index = node.get_inode().ib[2]
+                    if inode.ib[2] > 0:
+                        ib_ib_table_index = inode.ib[2]
                         if ib_ib_table_index > self.max_block_index:
                             print(f"Warning invalid indirect indirect block table index for: {self.tree.item(item)['text']} ")
                         else:
                             ib_ib_table = self.read_block_indexes(ib_ib_table_index)
                             for ib_table in ib_ib_table:
-                                for btable_index in ib_table:
+                                ib_indexes = self.read_block_indexes(ib_table)
+                                for btable_index in ib_indexes:
                                     blocks += self.read_block_indexes(btable_index)
                     
                     # Read data
@@ -1152,13 +1157,13 @@ class App(tk.Frame):
         blocks = []
         self._stream.seek(blocktable_index * self._fsize)
         blockcount = 0
-        while blockcount < 2048:
+        while blockcount <= 2048:
             blockcount += 1
             block_index = struct.unpack(">Q", self._stream.read(8))[0]
             if block_index == 0:
                 break
-            #if block_index > self.max_block_index:
-            #    break
+            if block_index > self.max_block_index:
+                print(f"Warning invalid block index {block_index}")
             blocks.append(block_index)
         return blocks
 
@@ -1370,37 +1375,15 @@ def main(path, keyfile):
         disk = disklib.DiskFormatFactory.detect(config)
 
         scanner = Scanner2(disk, 0x200)
-        inodes = scanner.scan()
+        
+        load_path = os.path.normpath(f"{os.getcwd()}\\scans") + "\\" + os.path.basename(path).split(".")[0]
+        load_path = load_path.lower()
 
-        # test_nodes = []
-        # file1 = Node(NodeType.FILE)
-        # file1.set_name('file1')
-        # file2 = Node(NodeType.FILE)
-        # file2.set_name('file2')
-        # file3 = Node(NodeType.FILE)
-        # file3.set_name('file3')
-        # folder1 = Node(NodeType.DIRECTORY)
-        # folder1.set_name('folder1')
-        # folder1.add_child(file3)
-        # folder2 = Node(NodeType.DIRECTORY)
-        # folder2.set_name('folder2')
-        # folder3 = Node(NodeType.DIRECTORY)
-        # folder3.set_name('folder3')
-        # file4 = Node(NodeType.FILE)
-        # file4.set_name('file4')
-        # file5 = Node(NodeType.FILE)
-        # file5.set_name('file5')
-        # folder2.add_child(folder3)
-        # folder2.add_child(file4)
-        # folder3.add_child(file5)
-        # test_nodes.append(file1)
-        # test_nodes.append(file2)
-        # test_nodes.append(folder1)
-        # test_nodes.append(folder2)
-        # inodes = test_nodes
+        inodes = scanner.scan(load_path)
+
 
         root = tk.Tk()
-        root.title("PS Recovery Prototype [06142021v0]")
+        root.title("PS Recovery Prototype")
         app = App(root, inodes, disk)
         app.mainloop()
 
