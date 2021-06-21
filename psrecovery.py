@@ -428,7 +428,7 @@ class Scanner2:
                 tables.update(self._get_all_offsets(node, key))
         return tables
 
-    def scan(self, loadpath):
+    def scan(self, loadpath, deep_scan=False):
         # self._inodes = self._find_inodes()
         # self._directs = self._find_directs()
         # return self._directs
@@ -509,73 +509,130 @@ class Scanner2:
                 return True
 
             # Start scan for deleted files
-            for cyl in range(self._ncg): #range(151, 345): #self._ncg):
-                cyl_offset = (self._fpg * self._fsize) * cyl
-                print(f"Scanning cylinder group: {cyl}: {cyl_offset:X}")
+            if deep_scan is False :
+                for cyl in range(self._ncg): #range(151, 345): #self._ncg):
+                    cyl_offset = (self._fpg * self._fsize) * cyl
+                    print(f"Scanning cylinder group: {cyl}: {cyl_offset:X}")
 
-                # Read in the inode table
-                inode_table_offset = cyl_offset + inode_block_offset
-                inode_table_size = self._ipg * 0x100
-                self._stream.seek(inode_table_offset, 0)
-                inode_table = self._stream.read(inode_table_size)
+                    # Read in the inode table
+                    inode_table_offset = cyl_offset + inode_block_offset
+                    inode_table_size = self._ipg * 0x100
+                    self._stream.seek(inode_table_offset, 0)
+                    inode_table = self._stream.read(inode_table_size)
 
-                # Check for any deleted inodes
-                # We go through each inode in the inode table
-                for i in range(self._ipg):
-                    data = inode_table[i * 0x100: i*0x100+0x100]
-                    # Check if any of the ib, db, or extb fields have any data
-                    indexes = data[0x70:0xF8]
-                    # TODO: Definitely need to add more checks, we keep running into bad inodes
-                    # Check if indexes is all zero
-                    if not any(indexes):
-                        continue
-                    if not is_valid_block_table(indexes):
-                        continue
-                    # Get the offset of this inode
-                    inode_offset = inode_table_offset + (i * 0x100)
-                    # Check if this inode is a non-deleted inode
-                    #if True:
-                    if inode_offset not in self._active_inodes:
-                        # This inode was deleted, so add it to the list
-                        inode_index = (cyl * self._ipg) + i
-                        print(f"Inode found at index {inode_index}, offset: 0x{inode_offset:X}")
-                        # TODO: Maybe move this up instead of doing slicing
-                        inode = Inode.from_buffer(bytearray(data))
-                        inode.set_offset(inode_offset)
-                        inodeMap[inode_offset] = inode
-
-                # Get the offset of the data block
-                data_start = cyl_offset + data_block_offset
-                data_end = data_start + data_block_length
-
-                # Check the data block sections at a time for direct tables
-                offset = data_start
-                bytesLeft = data_block_length
-                while offset < data_end:
-                    # print(hex(offset))
-                    # Load a buffer into memory
-                    self._stream.seek(offset, 0)
-                    bufSize = min(bytesLeft, 0x100000)
-                    buf = self._stream.read(bufSize)
-                    # Check every 0x800 bytes in the buffer for a direct table
-                    for block in range(0, bufSize, 0x800):
-                        # First we'll check the first 0x18 bytes for the first two direct's
-                        dirents = buf[block:block+0x18]
-                        # These tests check the d_type, d_namlen, and d_name fields
-                        test1 = dirents[6] == 0x4 and dirents[7] == 0x1 and dirents[8:9] == b'.'
-                        if not test1:
+                    # Check for any deleted inodes
+                    # We go through each inode in the inode table
+                    for i in range(self._ipg):
+                        data = inode_table[i * 0x100: i*0x100+0x100]
+                        # Check if any of the ib, db, or extb fields have any data
+                        indexes = data[0x70:0xF8]
+                        # TODO: Definitely need to add more checks, we keep running into bad inodes
+                        # Check if indexes is all zero
+                        if not any(indexes):
                             continue
-                        test2 = dirents[0x12] == 0x4 and dirents[0x13] == 0x2 and dirents[0x14:0x16] == b'..'
+                        if not is_valid_block_table(indexes):
+                            continue
+                        # Get the offset of this inode
+                        inode_offset = inode_table_offset + (i * 0x100)
+                        # Check if this inode is a non-deleted inode
+                        #if True:
+                        if inode_offset not in self._active_inodes:
+                            # This inode was deleted, so add it to the list
+                            inode_index = (cyl * self._ipg) + i
+                            print(f"Inode found at index {inode_index}, offset: 0x{inode_offset:X}")
+                            # TODO: Maybe move this up instead of doing slicing
+                            inode = Inode.from_buffer(bytearray(data))
+                            inode.set_offset(inode_offset)
+                            inodeMap[inode_offset] = inode
+
+                    # Get the offset of the data block
+                    data_start = cyl_offset + data_block_offset
+                    data_end = data_start + data_block_length
+
+                    # Check the data block sections at a time for direct tables
+                    offset = data_start
+                    bytesLeft = data_block_length
+                    while offset < data_end:
+                        # print(hex(offset))
+                        # Load a buffer into memory
+                        self._stream.seek(offset, 0)
+                        bufSize = min(bytesLeft, 0x100000)
+                        buf = self._stream.read(bufSize)
+                        # Check every 0x800 bytes in the buffer for a direct table
+                        for block in range(0, bufSize, 0x800):
+                            # First we'll check the first 0x18 bytes for the first two direct's
+                            dirents = buf[block:block+0x18]
+                            # These tests check the d_type, d_namlen, and d_name fields
+                            test1 = dirents[6] == 0x4 and dirents[7] == 0x1 and dirents[8:9] == b'.'
+                            if not test1:
+                                continue
+                            test2 = dirents[0x12] == 0x4 and dirents[0x13] == 0x2 and dirents[0x14:0x16] == b'..'
+                            if test2:
+                                print(f"Direct table found at: 0x{offset+block:X}")
+                                # We found a direct table, so lets read out the entire table
+                                directory = self._extract_directs(offset+block)
+                                directsList.extend(directory.get_directs())
+                                directoryMap[offset+block] = directory
+
+                        bytesLeft -= bufSize
+                        offset += bufSize
+            else:
+                drive_length = self._stream.getLength()
+                for offset in range(0, drive_length, self._fsize):
+                    self._stream.seek(offset)
+                    # Check if directs
+                    direct_check = self._stream.read(0x18)
+                    test1 = direct_check[6] == 0x4 and direct_check[7] == 0x1 and direct_check[8:9] == b'.'
+                    if test1:
+                        test2 = direct_check[0x12] == 0x4 and direct_check[0x13] == 0x2 and direct_check[0x14:0x16] == b'..'
                         if test2:
-                            print(f"Direct table found at: 0x{offset+block:X}")
+                            print(f"Direct table found at: 0x{offset:X}")
                             # We found a direct table, so lets read out the entire table
-                            directory = self._extract_directs(offset+block)
+                            directory = self._extract_directs(offset)
                             directsList.extend(directory.get_directs())
-                            directoryMap[offset+block] = directory
-
-                    bytesLeft -= bufSize
-                    offset += bufSize
-
+                            directoryMap[offset] = directory
+                            continue
+                    # Check if inode
+                    def read_inode_at_offset(offset):
+                        drive_length = self._stream.getLength()
+                        self._stream.seek(offset)
+                        data = self._stream.read(0x100)
+                        inode = Inode.from_buffer(bytearray(data))
+                        inode.set_offset(offset)
+                        if inode.mode == 0:
+                            return None
+                        if inode.nlink > 0x10:
+                            return None
+                        if inode.size > drive_length:
+                            return None
+                        if(inode.atime < 32536799999 and inode.mtime < 32536799999 and inode.ctime < 32536799999):
+                            if(inode.atime > 0 and inode.mtime > 0 and inode.ctime > 0):
+                                for db in inode.db:
+                                    if(db > drive_length / self._fsize):
+                                        return None
+                                for ib in inode.ib:
+                                    if(ib > drive_length / self._fsize):
+                                        return None
+                                print(f"Inode found at offset: 0x{offset:X} ({offset})")
+                                inodeMap[offset] = inode
+                                return inode
+                            else:
+                                return None
+                        else:
+                            return None
+                    inode = read_inode_at_offset(offset)
+                    if inode:
+                        _offset = offset + 0x100
+                        while _offset < offset + self._fsize:
+                            inode = read_inode_at_offset(_offset)
+                            if inode:
+                                _offset += 0x100
+                            else:
+                                break
+                                
+                    if (offset & 0xfffffff) == 0:
+                        print(f"Percent Complete: {round((offset/drive_length)*100,2)}%")
+                                           
         print("Finished scanning. Now analyzing...")
 
         # Save the offsets to files so we don't have to go through the entire disk again
@@ -940,6 +997,11 @@ all_filesigs = [a_filesig for a_filesig in FileSignature.__subclasses__()]
 class App(tk.Frame):
     def __init__(self, master, nodes, disk):
         
+        self.item_right_click_on = None
+        self.recovered_files = 0
+        self.recovered_inodes = 0
+        self.recovered_directs = 0
+        
         # Disk
         self._partition = disk.getPartitionByName('dev_hdd0')
         self._stream = self._partition.getDataProvider()
@@ -954,11 +1016,11 @@ class App(tk.Frame):
 
         self.max_block_index = self._partition.getLength() / self._fsize
 
-        tk.Frame.__init__(self, master)
-
         self._master = master
         self._master.geometry("1200x800")
         self._nodes = nodes
+
+        tk.Frame.__init__(self, master)
 
         self.pack(fill='both', expand=True)
         # mainframe = tk.Frame(self)
@@ -996,7 +1058,13 @@ class App(tk.Frame):
         # self.pack()
         root_node = self.tree.insert('', tk.END, text='root', image=self.folder_direct_ref_ico)
         self.node_map = {}
+        print("Processing directories...")
         self.process_directory(root_node, nodes)
+        print(f"Fully Recovered: {self.recovered_files} files!")
+        print(f"Inodes: {self.recovered_inodes} inodes!")
+        print(f"Directs: {self.recovered_directs} directs!")
+        print("Sorting directories...")
+        self.sort_root_folders_to_top()
         # self.tree.grid(sticky='nesw')
         # self.tree.pack(side='left', fill='both', expand=True)
 
@@ -1016,8 +1084,6 @@ class App(tk.Frame):
                                       command=self.display_file_info)
         self.tree.bind("<ButtonRelease-3>", self.open_context_menu)
 
-        self.item_right_click_on = None
-
     def open_context_menu(self, event):
         item = self.tree.identify('row', event.x, event.y)
         self.item_right_click_on = item
@@ -1030,6 +1096,8 @@ class App(tk.Frame):
             inode:Inode = node.get_inode()
             file_offset = inode.db[0] * self._fsize
             idenfified = False
+            if(file_offset > self.max_block_index):
+                return
             for filesig in all_filesigs:
                 self._stream.seek(file_offset)
                 sig = filesig(self._stream, file_offset)
@@ -1062,8 +1130,8 @@ class App(tk.Frame):
                                 2)
         add_attribute_row_item( "Has Inode: ",
                                 'True' if self.node_map[self.item_right_click_on].get_inode() else 'False',
-                                3)                      
-
+                                3)
+        
     def recover_selected_files(self):
         print("Recover files...")
         recover_items = []
@@ -1162,8 +1230,8 @@ class App(tk.Frame):
             block_index = struct.unpack(">Q", self._stream.read(8))[0]
             if block_index == 0:
                 break
-            if block_index > self.max_block_index:
-                print(f"Warning invalid block index {block_index}")
+            #if block_index > self.max_block_index:
+            #    print(f"Warning invalid block index: {block_index} max is: {self.max_block_index}")
             blocks.append(block_index)
         return blocks
 
@@ -1202,6 +1270,12 @@ class App(tk.Frame):
         
         self.tree.heading(column, command=lambda: \
             self.sort_column(column, not reverse))
+
+    def sort_root_folders_to_top(self):
+        items = self.tree.get_children('I001')
+        for item in items:
+            if self.node_map[item].get_type() == NodeType.DIRECTORY:
+                self.tree.move(item,'I001',0)
 
     def find_text(self, query, start=None):
         start_index = 0
@@ -1294,7 +1368,6 @@ class App(tk.Frame):
                                     return False
         return True
 
-
     def process_directory(self, parent, nodes):
         for node in nodes:
             node:Node
@@ -1317,19 +1390,25 @@ class App(tk.Frame):
                 valid = self.check_if_inode_indexes_valid(node)
                 if node.get_inode() and node.get_direct():
                     icon = self.file_recovered_ico
+                    self.recovered_files += 1
                 elif node.get_inode():
                     icon = self.file_inode_ico
+                    self.recovered_inodes += 1
                 elif node.get_direct():
                     icon = self.file_direct_ico
+                    self.recovered_directs += 1
                 if not valid:
                     icon = self.file_warning_ico
             else:
                 if node.get_inode() and node.get_direct():
                     icon = self.folder_recovered_ico
+                    self.recovered_files += 1
                 elif node.get_inode():
                     icon = self.folder_inode_ico
+                    self.recovered_inodes += 1
                 elif node.get_direct():
                     icon = self.folder_direct_ico
+                    self.recovered_directs += 1
                 else:
                     icon = self.folder_direct_ref_ico
             # Name
@@ -1363,23 +1442,26 @@ class App(tk.Frame):
             filesize /= 1024.0
         return "%3.2f%s" % (filesize, 'TB')
 
-def main(path, keyfile):
+def main(path, keyfile=None, deep_scan=False):
     with open(path, 'rb') as fp:
         stream = disklib.FileDiskStream(path)
-        keys = open(keyfile, 'rb').read()
-
         config = disklib.DiskConfig()
         config.setStream(stream)
-        config.setKeys(keys)
+        
+        if keyfile:
+            keys = open(keyfile, 'rb').read()
+            config.setKeys(keys)
+        else:
+            print("\nDecrypted drive support is broken currently... \nOpen an encrypted drive with a keyfile")
 
         disk = disklib.DiskFormatFactory.detect(config)
-
+        
         scanner = Scanner2(disk, 0x200)
         
         load_path = os.path.normpath(f"{os.getcwd()}\\scans") + "\\" + os.path.basename(path).split(".")[0]
         load_path = load_path.lower()
 
-        inodes = scanner.scan(load_path)
+        inodes = scanner.scan(load_path,deep_scan)
 
 
         root = tk.Tk()
@@ -1387,10 +1469,26 @@ def main(path, keyfile):
         app = App(root, inodes, disk)
         app.mainloop()
 
+import argparse
 
 if __name__ == "__main__":
-    # <hdd image>
-    if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} <image path> <keyfile path>")
+    if len(sys.argv) == 1 or len(sys.argv) > 4:
+        print(f"Usage: {sys.argv[0]}\n Encrypted Image: <image path> <keyfile path> \n Decrypted Image: <image path> \n Optional: --deep-scan")
         exit()
-    main(sys.argv[1], sys.argv[2])
+
+    deep_scan = False
+    img_path = sys.argv[1]
+    key_path = None
+
+    if(len(sys.argv) == 3):
+        if (sys.argv[2] == '--deep-scan'):
+            deep_scan = True
+        else:
+            key_path = sys.argv[2]
+
+    if(len(sys.argv) == 4):
+        key_path = sys.argv[2]
+        if (sys.argv[3] == '--deep-scan'):
+            deep_scan = True
+        
+    main(img_path, key_path, deep_scan)
