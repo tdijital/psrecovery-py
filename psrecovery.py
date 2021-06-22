@@ -998,6 +998,7 @@ class App(tk.Frame):
     def __init__(self, master, nodes, disk):
         
         self.item_right_click_on = None
+        self._search_text = ""
         self.recovered_files = 0
         self.recovered_inodes = 0
         self.recovered_directs = 0
@@ -1073,8 +1074,8 @@ class App(tk.Frame):
         xsb.grid(row=1, column=0, sticky='ew')
         # self.grid()
         master.bind('<Control-f>', self.find)
-        master.bind('<Control-z>', self.test)
-        self._search_text = ""
+        master.bind('<F3>', self.find_next)
+        master.bind('<Shift-F3>', lambda event:self.find_next(event, True)) # Previous
         self._nodes = self.get_all_nodes()
 
         self.context_menu = tk.Menu(self, tearoff=0)
@@ -1083,7 +1084,7 @@ class App(tk.Frame):
         self.context_menu.add_command(label='Get Info',
                                       command=self.display_file_info)
         self.tree.bind("<ButtonRelease-3>", self.open_context_menu)
-
+    
     def open_context_menu(self, event):
         item = self.tree.identify('row', event.x, event.y)
         self.item_right_click_on = item
@@ -1277,31 +1278,33 @@ class App(tk.Frame):
             if self.node_map[item].get_type() == NodeType.DIRECTORY:
                 self.tree.move(item,'I001',0)
 
-    def find_text(self, query, start=None):
+    def find_text(self, query, start=None, reversed=False):
         start_index = 0
+        end_index = 0 if reversed else len(self._nodes)
+        increment = -1 if reversed else 1
+        offset = -1 if reversed else 1
         if start:
             for i, node in enumerate(self._nodes):
                 if node == start:
                     start_index = i
-        for i in range(start_index+1, len(self._nodes)):
+        for i in range(start_index+offset, end_index, increment):
             text = self.tree.item(self._nodes[i])['text']
             if query in text.lower():
                 return self._nodes[i]
-        for i in range(0, start_index):
+        for i in range(end_index, start_index, increment):
             text = self.tree.item(self._nodes[i])['text']
             if query in text.lower():
                 return self._nodes[i]
         return None
     
-    def test(self, event):
-        if not self._search_text:
-            return
-        focused = self.tree.focus()
-        node = self.find_text(self._search_text, start=focused)
-        if node:
-            self.tree.see(node)
-            self.tree.focus(node)
-            self.tree.selection_set(node)
+    def find_next(self, event, reversed=False):
+        if self._search_text != '':
+            focused = self.tree.focus()
+            found = self.find_text(self._search_text, focused, reversed)
+            if found:
+                self.tree.see(found)
+                self.tree.focus(found)
+                self.tree.selection_set(found)
 
     def find(self, event):
         print("Find")
@@ -1310,8 +1313,6 @@ class App(tk.Frame):
         if query:
             self._search_text = query.lower()
             focused = self.tree.focus()
-            if focused:
-                print(f"Starting from {focused}")
             found = self.find_text(self._search_text, focused)
             if found:
                 self.tree.see(found)
