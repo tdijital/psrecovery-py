@@ -463,7 +463,7 @@ class Scanner2:
         self._active_directs = self._get_all_offsets(root, 'dirent')
 
         self._ninodes = (self._ipg * self._ncg)
-
+        self.max_block_index = self._stream.getLength() / self._fsize
     def _get_all_offsets(self, root, key):
         """Get all tables from a directory"""
         tables = set()
