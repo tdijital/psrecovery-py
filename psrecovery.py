@@ -474,6 +474,40 @@ class Scanner2:
                 tables.update(self._get_all_offsets(node, key))
         return tables
 
+    def _is_valid_block_table(self, indexes):
+        for x in range(2+12+3):
+            index = int.from_bytes(indexes[(x*8):(x*8)+8], byteorder='big')
+            if -1 <= index > self.max_block_index:
+                return False
+        return True
+
+    def _read_inode_at_offset(self, offset):
+        self._stream.seek(offset)
+        data = self._stream.read(0x100)
+        # Fast basic checks
+        indexes = data[0x70:0xF8]
+        if not any(indexes):
+            return None
+        if not self._is_valid_block_table(indexes):
+            return None
+        # Create the inode
+        inode = Inode.from_buffer(bytearray(data))
+        inode.set_offset(offset)
+        # More checks
+        if inode.mode == 0:
+            return None
+        if inode.nlink > 0x10:
+            return None
+        if inode.size > 1099511627776 or inode.size < 0:
+            return None
+        if(inode.atime < 32536799999 and inode.mtime < 32536799999 and inode.ctime < 32536799999):
+            if(inode.atime > 0 and inode.mtime > 0 and inode.ctime > 0):
+                return inode
+            else:
+                return None
+        else:
+            return None
+
     def scan(self, loadpath, deep_scan=False):
         # self._inodes = self._find_inodes()
         # self._directs = self._find_directs()
@@ -583,6 +617,9 @@ class Scanner2:
                         # Check if this inode is a non-deleted inode
                         #if True:
                         if inode_offset not in self._active_inodes:
+                            inode = self._read_inode_at_offset(inode_offset)
+                            # Check if this is an inode
+                            if inode:
                             # This inode was deleted, so add it to the list
                             inode_index = (cyl * self._ipg) + i
                             print(f"Inode found at index {inode_index}, offset: 0x{inode_offset:X}")
@@ -639,39 +676,14 @@ class Scanner2:
                             directoryMap[offset] = directory
                             continue
                     # Check if inode
-                    def read_inode_at_offset(offset):
-                        drive_length = self._stream.getLength()
-                        self._stream.seek(offset)
-                        data = self._stream.read(0x100)
-                        inode = Inode.from_buffer(bytearray(data))
-                        inode.set_offset(offset)
-                        if inode.mode == 0:
-                            return None
-                        if inode.nlink > 0x10:
-                            return None
-                        if inode.size > drive_length:
-                            return None
-                        if(inode.atime < 32536799999 and inode.mtime < 32536799999 and inode.ctime < 32536799999):
-                            if(inode.atime > 0 and inode.mtime > 0 and inode.ctime > 0):
-                                for db in inode.db:
-                                    if(db > drive_length / self._fsize):
-                                        return None
-                                for ib in inode.ib:
-                                    if(ib > drive_length / self._fsize):
-                                        return None
-                                print(f"Inode found at offset: 0x{offset:X} ({offset})")
-                                inodeMap[offset] = inode
-                                return inode
-                            else:
-                                return None
-                        else:
-                            return None
-                    inode = read_inode_at_offset(offset)
+                    inode = self._read_inode_at_offset(offset)
                     if inode:
+                        inodeMap[offset] = inode
                         _offset = offset + 0x100
-                        while _offset < offset + self._fsize:
-                            inode = read_inode_at_offset(_offset)
+                        while _offset < offset + scan_interval:
+                            inode = self._read_inode_at_offset(_offset)
                             if inode:
+                                inodeMap[_offset] = inode
                                 _offset += 0x100
                             else:
                                 break
