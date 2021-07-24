@@ -71,6 +71,52 @@ class Inode(ctypes.BigEndianStructure):
         self._offset = offset
     def get_offset(self):
         return self._offset
+    def get_block_indexes(self, stream, fsize):
+        
+        max_bindex = stream.getLength() / fsize
+
+        def read_block_indexes(blocktable_index, stream=stream, fsize=fsize):
+            if max_bindex < blocktable_index:
+                Logger.log(f"Warning block table index is out of bounds: {blocktable_index}")
+                blocktable_index = 0
+            blocks = []
+            stream.seek(blocktable_index * fsize)
+            blockcount = 0
+            while blockcount <= 2048:
+                blockcount += 1
+                block_index = struct.unpack(">Q", stream.read(8))[0]
+                if block_index == 0:
+                    break
+                blocks.append(block_index)
+            return blocks
+        
+        blocks = []
+        for block in self.db:
+            if block == 0:
+                break
+            if max_bindex < block:
+                Logger.log(f"Warning db index is out of bounds: {block}")
+                block = 0
+            blocks.append(block)
+        
+        # Read indirect blocks
+        if self.ib[0] > 0:
+            btable_index = self.ib[0]
+            blocks += read_block_indexes(btable_index)
+        if self.ib[1] > 0:
+            ib_table_index = self.ib[1]
+            ib_table = read_block_indexes(ib_table_index)
+            for btable_index in ib_table:
+                blocks += read_block_indexes(btable_index)
+        if self.ib[2] > 0:
+            ib_ib_table_index = self.ib[2]
+            ib_ib_table = read_block_indexes(ib_ib_table_index)
+            for ib_table in ib_ib_table:
+                ib_indexes = read_block_indexes(ib_table)
+                for btable_index in ib_indexes:
+                    blocks += read_block_indexes(btable_index)
+        
+        return blocks
 
 
 class NodeType:
@@ -1166,39 +1212,7 @@ class App(tk.Frame):
                 # If an inode exists read the inodes blocks
                 if inode is not None:
                     # Read direct blocks
-                    for block in inode.db:
-                        if block == 0:
-                            break
-                        if block > self.max_block_index:
-                            print(f"Warning invalid block index for: {self.tree.item(item)['text']} ")
-                            break
-                        blocks.append(block)
-                    
-                    # Read indirect blocks
-                    if inode.ib[0] > 0:
-                        btable_index = inode.ib[0]
-                        if btable_index > self.max_block_index:
-                            print(f"Warning invalid block table index for: {self.tree.item(item)['text']} ")
-                        else:
-                            blocks += self.read_block_indexes(btable_index)
-                    if inode.ib[1] > 0:
-                        ib_table_index = inode.ib[1]
-                        if ib_table_index > self.max_block_index:
-                            print(f"Warning invalid indirect block table index for: {self.tree.item(item)['text']} ")
-                        else:
-                            ib_table = self.read_block_indexes(ib_table_index)
-                            for btable_index in ib_table:
-                                blocks += self.read_block_indexes(btable_index)
-                    if inode.ib[2] > 0:
-                        ib_ib_table_index = inode.ib[2]
-                        if ib_ib_table_index > self.max_block_index:
-                            print(f"Warning invalid indirect indirect block table index for: {self.tree.item(item)['text']} ")
-                        else:
-                            ib_ib_table = self.read_block_indexes(ib_ib_table_index)
-                            for ib_table in ib_ib_table:
-                                ib_indexes = self.read_block_indexes(ib_table)
-                                for btable_index in ib_indexes:
-                                    blocks += self.read_block_indexes(btable_index)
+                    blocks = inode.get_block_indexes(self._stream, self._fsize)
                     
                     # Read data
                     remaining = node.get_size()
@@ -1222,19 +1236,7 @@ class App(tk.Frame):
             
                 print("Recovered: {}".format(file_path))
 
-    def read_block_indexes(self, blocktable_index):
-        blocks = []
-        self._stream.seek(blocktable_index * self._fsize)
-        blockcount = 0
-        while blockcount <= 2048:
-            blockcount += 1
-            block_index = struct.unpack(">Q", self._stream.read(8))[0]
-            if block_index == 0:
-                break
-            #if block_index > self.max_block_index:
-            #    print(f"Warning invalid block index: {block_index} max is: {self.max_block_index}")
-            blocks.append(block_index)
-        return blocks
+        
 
     def set_ts(self, path, node):
         if node.get_inode() is None:
