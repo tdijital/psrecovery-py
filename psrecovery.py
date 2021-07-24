@@ -143,7 +143,12 @@ class Node:
         self._parents = []
         self._type = typ
         self._filesignature = None
+        self._active = False
 
+    def set_active(self, active):
+        self._active = active
+    def get_active(self):
+        return self._active
     def set_name(self, name):
         self._name = name
     def get_name(self):
@@ -546,6 +551,8 @@ class Scanner2:
 
             for line in inodes_list:
                 offset = int(line.strip())
+                if offset in self._active_inodes:
+                    continue
                 self._stream.seek(offset)
                 data = self._stream.read(0x100)
                 inode = Inode.from_buffer(bytearray(data))
@@ -764,6 +771,36 @@ class Scanner2:
         # This will be used to look up a Node by it's Inode
         #inodeNodeMap = {}  # Unused at the moment
 
+        # Active Filesystem
+        for direct_offset in self._active_directs:
+            #  Create Direct
+            self._stream.seek(direct_offset)
+            buf = self._stream.read(self._bsize)
+            direct = self.read_direct(buf,0)
+            if not direct:
+                continue
+            # Create Inode
+            inode_offset = ino_to_offset(direct.ino)
+            self._stream.seek(inode_offset)
+            inode_data = self._stream.read(0x100)
+            inode = Inode.from_buffer(bytearray(inode_data))
+            inode.set_offset(inode_offset)
+            # Add the inode to the map
+            self._scan_results.inodeMap[inode_offset] = inode
+
+        # Create directories for active files on the filesystem
+        for direct_offset in self._active_directs:
+            self._stream.seek(direct_offset-0x18)
+            buf = self._stream.read(self._fsize)
+            direct = self.read_direct(buf,0)
+            if not direct:
+                continue
+            name = direct.get_name()
+            if name == '.':
+                directory = self._extract_directs(direct_offset-0x18, False)
+                self._scan_results.directsList.extend(directory.get_directs())
+                self._scan_results.directoryMap[direct_offset-0x18] = directory
+        
         t1 = time.time()
         # Populate the inoDirectMap
         for direct in directsList:
@@ -787,6 +824,8 @@ class Scanner2:
                 node = Node(NodeType.DIRECTORY)
             else:
                 node = Node(NodeType.FILE)
+            if direct.get_offset() in self._active_directs:
+                node.set_active(True)
             inode_offset = ino_to_offset(direct.ino)
             node.set_direct(direct)
             node.set_direct_offset(direct.get_offset())
@@ -922,7 +961,7 @@ class Scanner2:
 
         return root_nodes
 
-    def _extract_directs(self, addr):
+    def _extract_directs(self, addr, ignore_active=True):
         result = Directory(addr)
         started = False
 
@@ -946,8 +985,8 @@ class Scanner2:
 
             absolute_offset = (addr+offset)
             #if True:
-            if absolute_offset not in self._active_directs: #and name != "." and name != "..":
-                print(f"Deleted direct found at offset {absolute_offset}: {name}")
+            if absolute_offset not in self._active_directs and name != "." and name != ".." and ignore_active:
+            if absolute_offset not in self._active_directs or not ignore_active:
                 direct.set_name(name)
                 direct.set_offset(addr+offset)
                 result.add_direct(direct)
@@ -1101,10 +1140,12 @@ class App(tk.Frame):
         self.grid_rowconfigure(0, weight=1)
         self.grid_columnconfigure(0, weight=1)
 
+        self.folder_ico = ImageTk.PhotoImage(Image.open('assets/icon-folder.png'))
         self.folder_direct_ico = ImageTk.PhotoImage(Image.open('assets/icon-folder-direct.png'))
         self.folder_direct_ref_ico = ImageTk.PhotoImage(Image.open('assets/icon-folder-direct-ref.png'))
         self.folder_inode_ico = ImageTk.PhotoImage(Image.open('assets/icon-folder-inode.png'))
         self.folder_recovered_ico = ImageTk.PhotoImage(Image.open('assets/icon-folder-recovered.png'))
+        self.file_ico = ImageTk.PhotoImage(Image.open('assets/icon-file.png'))
         self.file_direct_ico = ImageTk.PhotoImage(Image.open('assets/icon-file-direct.png'))
         self.file_inode_ico = ImageTk.PhotoImage(Image.open('assets/icon-file-inode.png'))
         self.file_warning_ico = ImageTk.PhotoImage(Image.open('assets/icon-file-warning.png'))
@@ -1390,7 +1431,7 @@ class App(tk.Frame):
             if node.get_name() == '.' or node.get_name() == '..':
                 continue
             # Exclude directories at the root with no children
-            if node.get_type() != NodeType.FILE and len(node.get_children()) <= 2 and str(parent) == "I001":
+            if node.get_type() != NodeType.FILE and len(node.get_children()) <= 2 and str(parent) == "I001" and not node.get_active():
                 continue
             # Data
             size = node.get_size()
@@ -1404,6 +1445,9 @@ class App(tk.Frame):
             if node.get_type() == NodeType.FILE:
                 valid = self.check_if_inode_indexes_valid(node)
                 if node.get_inode() and node.get_direct():
+                    if node.get_active() is True:
+                        icon = self.file_ico
+                    else:
                     icon = self.file_recovered_ico
                     self.recovered_files += 1
                 elif node.get_inode():
@@ -1416,6 +1460,9 @@ class App(tk.Frame):
                     icon = self.file_warning_ico
             else:
                 if node.get_inode() and node.get_direct():
+                    if node.get_active() is True:
+                        icon = self.folder_ico
+                    else:
                     icon = self.folder_recovered_ico
                     self.recovered_files += 1
                 elif node.get_inode():
