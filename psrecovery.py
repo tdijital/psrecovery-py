@@ -485,7 +485,6 @@ class Scanner2:
 
         self._active_inodes = self._get_all_offsets(root, 'inode')
         self._active_directs = self._get_all_offsets(root, 'dirent')
-
         self._ninodes = (self._ipg * self._ncg)
         self.max_block_index = self._stream.getLength() / self._fsize
     def _get_all_offsets(self, root, key):
@@ -605,15 +604,6 @@ class Scanner2:
             cgsize = self._fpg * self._fsize
             data_block_length = (cgsize - data_block_offset) + 0x14000
 
-            max_block_index = self._stream.getLength() / self._fsize
-
-            def is_valid_block_table(indexes):
-                for x in range(2+12+3):
-                    index = int.from_bytes(indexes[(x*8):(x*8)+8], byteorder='big')
-                    if -1 <= index > max_block_index:
-                        return False
-                return True
-
             # Start scan for deleted files
             if deep_scan is False :
                 for cyl in range(self._ncg): #range(151, 345): #self._ncg):
@@ -622,23 +612,13 @@ class Scanner2:
 
                     # Read in the inode table
                     inode_table_offset = cyl_offset + inode_block_offset
-                    inode_table_size = self._ipg * 0x100
-                    self._stream.seek(inode_table_offset, 0)
-                    inode_table = self._stream.read(inode_table_size)
+                    # inode_table_size = self._ipg * 0x100
+                    # self._stream.seek(inode_table_offset, 0)
+                    # inode_table = self._stream.read(inode_table_size)
 
                     # Check for any deleted inodes
                     # We go through each inode in the inode table
                     for i in range(self._ipg):
-                        data = inode_table[i * 0x100: i*0x100+0x100]
-                        # Check if any of the ib, db, or extb fields have any data
-                        indexes = data[0x70:0xF8]
-                        # TODO: Definitely need to add more checks, we keep running into bad inodes
-                        # Check if indexes is all zero
-                        if not any(indexes):
-                            continue
-                        if not is_valid_block_table(indexes):
-                            continue
-                        # Get the offset of this inode
                         inode_offset = inode_table_offset + (i * 0x100)
                         # Check if this inode is a non-deleted inode
                         #if True:
@@ -682,8 +662,12 @@ class Scanner2:
                         bytesLeft -= bufSize
                         offset += bufSize
             else:
+                #
+                #  Deep Scan
+                #
                 drive_length = self._stream.getLength()
-                for offset in range(0, drive_length, self._fsize):
+                scan_interval = 0x800
+                for offset in range(0, drive_length, scan_interval):
                     self._stream.seek(offset)
                     # Check if directs
                     direct_check = self._stream.read(0x18)
@@ -985,7 +969,10 @@ class Scanner2:
         buf = self._stream.read(self._bsize)
 
         offset = 0
-        direct = self.read_next_direct(buf, offset)
+        direct = self.read_direct(buf, offset)
+
+        if not direct:
+            return None
 
         while True:
 
@@ -1023,27 +1010,19 @@ class Scanner2:
             if (expected_end + 8) >= 0x4000:
                 Logger.log(f"Log: Hit end of block when parsing direct table at 0x{addr:X}!")
 
-            # TODO: Check if both expected_end and direct_end are the same
-            direct = self.read_next_direct(buf, expected_end)
+            direct = self.read_direct(buf, expected_end)
             if not direct:
                 if (direct_end + 8) >= 0x4000:
                     Logger.log(f"Log: Hit end of block when parsing direct table at 0x{addr:X}!")
+                #    return result
+                direct = self.read_direct(buf, direct_end)
                     if not direct:
                         return result
                 offset = direct_end
             else:
                 offset = expected_end
 
-    # I don't know if this ever returns true
-    def find_trailing_directs(self, buffer, start_offset, search_dist):
-        for offset in range(start_offset, start_offset+search_dist):
-            direct = self.read_next_direct(buffer, offset)
-            if direct is not None:
-                print(f"Found a trailing direct! {direct._name}")
-                return direct
-        return None
-
-    def read_next_direct(self, buffer, offset):
+    def read_direct(self, buffer, offset):
         buf = bytearray(buffer[offset:offset+8])
         direct = Direct.from_buffer(buf)
 
@@ -1163,9 +1142,10 @@ class App(tk.Frame):
         self.tree.column("#0", minwidth=0, width=400)
 
         # self.pack()
-        root_node = self.tree.insert('', tk.END, text='root', image=self.folder_direct_ref_ico)
+        root_node = self.tree.insert('', tk.END, text='Root', image=self.folder_direct_ref_ico)
         self.node_map = {}
         Logger.log("Processing directories...")
+        self.process_directory(root_node, nodes)
         Logger.log(f"Fully Recovered: {self.recovered_files} files!")
         Logger.log(f"Inodes: {self.recovered_inodes} inodes!")
         Logger.log(f"Directs: {self.recovered_directs} directs!")
@@ -1236,6 +1216,9 @@ class App(tk.Frame):
         add_attribute_row_item( "Has Inode: ",
                                 'True' if self.node_map[self.item_right_click_on].get_inode() else 'False',
                                 3)
+        add_attribute_row_item( "Node ID: ",
+                                id(self.node_map[self.item_right_click_on]),
+                                4)
         
     def recover_selected_files(self):
         Logger.log("Recover files...")
@@ -1299,7 +1282,6 @@ class App(tk.Frame):
                 
                 self.set_ts(file_path, node)
             
-                print("Recovered: {}".format(file_path))
 
         Logger.log("Recovery Completed!")
         Logger.remove_stream(logfile)
@@ -1398,6 +1380,7 @@ class App(tk.Frame):
                 # If an inode exists read the inodes blocks
                 if node.get_inode() is not None:
                     Logger.log(f"Checking if inode is valid at offset: {node.get_inode_offset():X}")
+                    # Check direct blocks
                     for block in node.get_inode().db:
                         if block > self.max_block_index:
                             return False
@@ -1451,9 +1434,6 @@ class App(tk.Frame):
             ctime = node.get_creation_time()
             atime = node.get_last_access_time()
             mtime = node.get_last_modified_time()
-            direct_offset = hex(node.get_direct_offset()) if node.get_direct_offset() else 'None'
-            inode_offset = hex(node.get_inode_offset()) if node.get_inode_offset() else 'None'
-            has_inode = str(node.get_inode() is not None)
             # Icon
             if node.get_type() == NodeType.FILE:
                 valid = self.check_if_inode_indexes_valid(node)
@@ -1477,13 +1457,10 @@ class App(tk.Frame):
                         icon = self.folder_ico
                     else:
                     icon = self.folder_recovered_ico
-                    self.recovered_files += 1
                 elif node.get_inode():
                     icon = self.folder_inode_ico
-                    self.recovered_inodes += 1
                 elif node.get_direct():
                     icon = self.folder_direct_ico
-                    self.recovered_directs += 1
                 else:
                     icon = self.folder_direct_ref_ico
             # Name
@@ -1500,9 +1477,6 @@ class App(tk.Frame):
                 time.ctime(ctime) if ctime and ctime < 32536799999 else '',
                 time.ctime(atime) if atime and atime < 32536799999 else '',
                 time.ctime(mtime) if mtime and mtime < 32536799999 else '',
-                #direct_offset,
-                #inode_offset,
-                #has_inode
                 ),
                 image=icon,
                 tags = (str(node.get_inode_offset())))
