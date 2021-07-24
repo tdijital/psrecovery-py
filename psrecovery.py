@@ -9,6 +9,25 @@ import time
 import struct
 
 
+class Logger(object):
+    __instance = None
+    streams = []
+
+    @staticmethod
+    def log(msg):
+        if (len(Logger.streams) == 0):
+            Logger.log(msg)
+        for stream in Logger.streams:
+            stream.write(str(msg)+"\n")
+            stream.flush()
+
+    def remove_stream(stream):
+        for _stream in Logger.streams:
+            if _stream is stream:
+                Logger.streams.remove(_stream)
+                return
+
+
 """
 struct    direct {
     u_int32_t d_ino;        /* inode number of entry */
@@ -432,7 +451,7 @@ class Scanner2:
     def _initialize(self, disk):
         partition = disk.getPartitionByName('dev_hdd0')
         self._stream = partition.getDataProvider()
-        print(self._stream.getLength())
+        Logger.log(self._stream.getLength())
 
         # Load some fields we need from the ufs2 super block
         self._stream.seek(0x10000)
@@ -535,7 +554,7 @@ class Scanner2:
             # Directs.txt has offsets to all directs
             # We just load each offset, then go to the offset in the disk and read the structures
             # into the inodes_found and directs_found variables
-            print("Loading from files")
+            Logger.log("Loading from files")
             inodes_list = []
             with open(loadpath + '\\inodes.txt', 'r') as fp:
                 inodes_list = fp.readlines()
@@ -562,7 +581,7 @@ class Scanner2:
                     continue
                 if inode.size > max_file_length:
                     continue
-                #print(oct(inode.mode))
+                #Logger.log(oct(inode.mode))
                 inode.set_offset(offset)
                 inodeMap[offset] = inode
 
@@ -576,8 +595,8 @@ class Scanner2:
             loaded_from_file = True
         else:
             # There are no saved results, let's start a new scan
-            print(f"No previous scan found in {loadpath}")
-            print("Scanning drive")
+            Logger.log(f"No previous scan found in {loadpath}")
+            Logger.log("Scanning drive")
             assert(ctypes.sizeof(Direct) == 0x8)
             assert(ctypes.sizeof(Inode) == 0x100)
 
@@ -599,7 +618,7 @@ class Scanner2:
             if deep_scan is False :
                 for cyl in range(self._ncg): #range(151, 345): #self._ncg):
                     cyl_offset = (self._fpg * self._fsize) * cyl
-                    print(f"Scanning cylinder group: {cyl}: {cyl_offset:X}")
+                    Logger.log(f"Scanning cylinder group: {cyl}: {cyl_offset:X}")
 
                     # Read in the inode table
                     inode_table_offset = cyl_offset + inode_block_offset
@@ -629,11 +648,7 @@ class Scanner2:
                             if inode:
                             # This inode was deleted, so add it to the list
                             inode_index = (cyl * self._ipg) + i
-                            print(f"Inode found at index {inode_index}, offset: 0x{inode_offset:X}")
-                            # TODO: Maybe move this up instead of doing slicing
-                            inode = Inode.from_buffer(bytearray(data))
-                            inode.set_offset(inode_offset)
-                            inodeMap[inode_offset] = inode
+                                Logger.log(f"Inode found at index {inode_index}, offset: 0x{inode_offset:X}")
 
                     # Get the offset of the data block
                     data_start = cyl_offset + data_block_offset
@@ -643,7 +658,7 @@ class Scanner2:
                     offset = data_start
                     bytesLeft = data_block_length
                     while offset < data_end:
-                        # print(hex(offset))
+                        # Logger.log(hex(offset))
                         # Load a buffer into memory
                         self._stream.seek(offset, 0)
                         bufSize = min(bytesLeft, 0x100000)
@@ -685,20 +700,20 @@ class Scanner2:
                     # Check if inode
                     inode = self._read_inode_at_offset(offset)
                     if inode:
-                        inodeMap[offset] = inode
+                        Logger.log(f"Deleted inode found at offset: 0x{offset:X}")
                         _offset = offset + 0x100
                         while _offset < offset + scan_interval:
                             inode = self._read_inode_at_offset(_offset)
                             if inode:
-                                inodeMap[_offset] = inode
+                                Logger.log(f"Deleted inode found at offset: 0x{_offset:X}")
                                 _offset += 0x100
                             else:
                                 break
                                 
                     if (offset & 0xfffffff) == 0:
-                        print(f"Percent Complete: {round((offset/drive_length)*100,2)}%")
+                        Logger.log(f"Percent Complete: {round((offset/drive_length)*100,2)}%")
                                            
-        print("Finished scanning. Now analyzing...")
+        Logger.log("Finished scanning. Now analyzing...")
 
         # Save the offsets to files so we don't have to go through the entire disk again
         if not os.path.exists(loadpath + "\\"):
@@ -814,7 +829,7 @@ class Scanner2:
                 continue
             inoDirectMap[ino] = direct
         t2 = time.time()
-        print(f"Step 1: {t2 - t1}")
+        Logger.log(f"Step 1: {t2 - t1}")
 
         t1 = time.time()
         # Create an initial list of Node's using Direct's
@@ -842,7 +857,7 @@ class Scanner2:
                 claimedInodes.add(inode.get_offset())
             nodes.append(node)
         t2 = time.time()
-        print(f"Step 2: {t2 - t1}")
+        Logger.log(f"Step 2: {t2 - t1}")
 
         t1 = time.time()
         # Create Node's for any inode's that weren't claimed
@@ -868,7 +883,7 @@ class Scanner2:
             claimedInodes.add(inode.get_offset())
             nodes.append(node)
         t2 = time.time()
-        print(f"Step 3: {t2 - t1}")
+        Logger.log(f"Step 3: {t2 - t1}")
 
         t1 = time.time()
         # Now create relationships between nodes
@@ -909,7 +924,7 @@ class Scanner2:
                 directory_offset = directory.get_offset()
                 claimedDirectories.add(directory_offset)
         t2 = time.time()
-        print(f"Step 5: {t2 - t1}")
+        Logger.log(f"Step 5: {t2 - t1}")
 
         # for directory in directoryMap.values():
         #     offset = directory.get_offset()
@@ -950,7 +965,7 @@ class Scanner2:
                 child.add_parent(node)
             nodes.append(node)
         t2 = time.time()
-        print(f"Step 6: {t2 - t1}")
+        Logger.log(f"Step 6: {t2 - t1}")
 
         root_nodes = []
         for node in nodes:
@@ -986,6 +1001,7 @@ class Scanner2:
             absolute_offset = (addr+offset)
             #if True:
             if absolute_offset not in self._active_directs and name != "." and name != ".." and ignore_active:
+                Logger.log(f"Deleted direct found at offset {absolute_offset:X}: {name}")
             if absolute_offset not in self._active_directs or not ignore_active:
                 direct.set_name(name)
                 direct.set_offset(addr+offset)
@@ -994,8 +1010,7 @@ class Scanner2:
             # We hit the end of a block
             # Maybe continue reading?
             if offset >= 0x4000:
-                print(f"Warning: Hit end of block when parsing direct table at 0x{addr:X}!")
-                return result
+                Logger.log(f"Log: Hit end of block when parsing direct table at 0x{addr:X}!")
 
             expected_length = (8 + direct.namlen)
             if expected_length % 4 == 0:
@@ -1006,21 +1021,13 @@ class Scanner2:
             direct_end = offset + direct.reclen
             
             if (expected_end + 8) >= 0x4000:
-                print(f"Warning: Hit end of block when parsing direct table at 0x{addr:X}!")
-                return result
+                Logger.log(f"Log: Hit end of block when parsing direct table at 0x{addr:X}!")
 
             # TODO: Check if both expected_end and direct_end are the same
             direct = self.read_next_direct(buf, expected_end)
             if not direct:
                 if (direct_end + 8) >= 0x4000:
-                    print(f"Warning: Hit end of block when parsing direct table at 0x{addr:X}!")
-                    return result
-                direct = self.read_next_direct(buf, direct_end)
-                if not direct:
-                    if (expected_end + 0x40) >= 0x4000:
-                        direct = None
-                    else:
-                        direct = self.find_trailing_directs(buf, expected_end, 0x40)
+                    Logger.log(f"Log: Hit end of block when parsing direct table at 0x{addr:X}!")
                     if not direct:
                         return result
                 offset = direct_end
@@ -1077,7 +1084,7 @@ def print_directory(root, depth=0):
         inode_index = 'None'
         if inode.get_direct():
             inode_index = hex(inode.get_inode_index())
-        print('    '*depth + str(inode.get_name()) + f' (Type:{typ}, HasInode:{inode.get_inode() != None}, InodeOffset:{inode_offset}, InodeIndex:{inode_index} , DirectOffset:{direct_offset})')
+        Logger.log('    '*depth + str(inode.get_name()) + f' (Type:{typ}, HasInode:{inode.get_inode() != None}, InodeOffset:{inode_offset}, InodeIndex:{inode_index} , DirectOffset:{direct_offset})')
         if inode.get_type() == 1:
             print_directory(inode.get_children(), depth+1)
 
@@ -1158,13 +1165,11 @@ class App(tk.Frame):
         # self.pack()
         root_node = self.tree.insert('', tk.END, text='root', image=self.folder_direct_ref_ico)
         self.node_map = {}
-        print("Processing directories...")
-        self.process_directory(root_node, nodes)
-        print(f"Fully Recovered: {self.recovered_files} files!")
-        print(f"Inodes: {self.recovered_inodes} inodes!")
-        print(f"Directs: {self.recovered_directs} directs!")
-        print("Sorting directories...")
-        self.sort_root_folders_to_top()
+        Logger.log("Processing directories...")
+        Logger.log(f"Fully Recovered: {self.recovered_files} files!")
+        Logger.log(f"Inodes: {self.recovered_inodes} inodes!")
+        Logger.log(f"Directs: {self.recovered_directs} directs!")
+        Logger.log("Sorting directories...")
         # self.tree.grid(sticky='nesw')
         # self.tree.pack(side='left', fill='both', expand=True)
 
@@ -1233,7 +1238,7 @@ class App(tk.Frame):
                                 3)
         
     def recover_selected_files(self):
-        print("Recover files...")
+        Logger.log("Recover files...")
         recover_items = []
         for item in self.tree.selection():
             recover_items.append(item)
@@ -1243,11 +1248,15 @@ class App(tk.Frame):
 
         outpath = filedialog.askdirectory()
 
+        logfile = open(outpath + '\\recovery-log.txt','w')
+        Logger.streams.append(logfile)
+
         for item in recover_items:
             node:Node = self.node_map[item]
 
             # Create any parent folders for the file
-            path = outpath + "\\" + self.get_item_full_path(item)
+            item_path = self.get_item_full_path(item)
+            path = outpath + "\\" + item_path
             path = os.path.normpath(path)
             dirname = os.path.dirname(__file__)
             fullpath = os.path.join(dirname, path)
@@ -1277,6 +1286,9 @@ class App(tk.Frame):
                             read = min(remaining, self._bsize)
                             file_bytes += self._stream.read(read)
                             remaining -= read
+                    Logger.log("Recovered [Completely]: {}".format(item_path))
+                else:
+                    Logger.log("Recovered [Direct Only]: {}".format(item_path))
                 
                 # Write the file     
                 file_path = fullpath + "\\" + self.tree.item(item)['text']
@@ -1289,6 +1301,8 @@ class App(tk.Frame):
             
                 print("Recovered: {}".format(file_path))
 
+        Logger.log("Recovery Completed!")
+        Logger.remove_stream(logfile)
         
 
     def set_ts(self, path, node):
@@ -1362,7 +1376,7 @@ class App(tk.Frame):
                 self.tree.selection_set(found)
 
     def find(self, event):
-        print("Find")
+        Logger.log("Find")
         query = simpledialog.askstring("Find File", "Enter file name:", initialvalue=self._search_text,
             parent=self)
         if query:
@@ -1383,8 +1397,7 @@ class App(tk.Frame):
         if node.get_type() == NodeType.FILE:
                 # If an inode exists read the inodes blocks
                 if node.get_inode() is not None:
-                    print(f"Checking if inode is valid at offset: {node.get_inode_offset():X}")
-                    # Check indirect blocks
+                    Logger.log(f"Checking if inode is valid at offset: {node.get_inode_offset():X}")
                     for block in node.get_inode().db:
                         if block > self.max_block_index:
                             return False
@@ -1505,6 +1518,11 @@ class App(tk.Frame):
         return "%3.2f%s" % (filesize, 'TB')
 
 def main(path, keyfile=None, deep_scan=False):
+    
+    Logger.streams.append(sys.stdout)
+    logfile = open('log.txt','w')
+    Logger.streams.append(logfile)
+
     with open(path, 'rb') as fp:
         stream = disklib.FileDiskStream(path)
         config = disklib.DiskConfig()
@@ -1514,7 +1532,7 @@ def main(path, keyfile=None, deep_scan=False):
             keys = open(keyfile, 'rb').read()
             config.setKeys(keys)
         else:
-            print("\nDecrypted drive support is broken currently... \nOpen an encrypted drive with a keyfile")
+            Logger.log("\nDecrypted drive support is broken currently... \nOpen an encrypted drive with a keyfile")
 
         disk = disklib.DiskFormatFactory.detect(config)
         
@@ -1535,7 +1553,7 @@ import argparse
 
 if __name__ == "__main__":
     if len(sys.argv) == 1 or len(sys.argv) > 4:
-        print(f"Usage: {sys.argv[0]}\n Encrypted Image: <image path> <keyfile path> \n Decrypted Image: <image path> \n Optional: --deep-scan")
+        Logger.log(f"Usage: {sys.argv[0]}\n Encrypted Image: <image path> <keyfile path> \n Decrypted Image: <image path> \n Optional: --deep-scan")
         exit()
 
     deep_scan = False
