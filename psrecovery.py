@@ -178,7 +178,7 @@ class Inode(ctypes.BigEndianStructure):
             if max_bindex < blocktable_index:
                 Logger.log(f"Warning block table index is out of bounds: {blocktable_index:X}")
                 blocktable_index = 0
-            block_table_offset = (blocktable_index * fsize) - self.blksize
+            block_table_offset = blocktable_index * sb.fsize
             blocks_indexes = []
             stream.seek(block_table_offset)
             blockcount = 0
