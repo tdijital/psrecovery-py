@@ -8,11 +8,13 @@ import json
 import time
 import struct
 
+class Endianness:
+    BIG = 'big'
+    LITTLE = 'little'
 
-
+endianness = Endianness.BIG
 
 class Logger(object):
-    __instance = None
     streams = []
 
     @staticmethod
@@ -37,46 +39,46 @@ class SuperBlock():
         stream.seek(0x10000)
         # fsiblkno
         stream.seek(0x10000 + 0x10)
-        self.iblkno = int.from_bytes(stream.read(4), byteorder='big')
+        self.iblkno = int.from_bytes(stream.read(4), byteorder=endianness)
         # fs_dblkno
         stream.seek(0x10000 + 0x14)
-        self.dblkno = int.from_bytes(stream.read(4), byteorder='big')
+        self.dblkno = int.from_bytes(stream.read(4), byteorder=endianness)
         # fs_ncg
         stream.seek(0x10000 + 0x2C)
-        self.ncg = int.from_bytes(stream.read(4), byteorder='big', signed=False)
+        self.ncg = int.from_bytes(stream.read(4), byteorder=endianness, signed=False)
         # fsbsize
         stream.seek(0x10000 + 0x30)
-        self.bsize = int.from_bytes(stream.read(4), byteorder='big')
+        self.bsize = int.from_bytes(stream.read(4), byteorder=endianness)
         # fsfsize
         stream.seek(0x10000 + 0x34)
-        self.fsize = int.from_bytes(stream.read(4), byteorder='big')
+        self.fsize = int.from_bytes(stream.read(4), byteorder=endianness)
         # fs_frag
         stream.seek(0x10000 + 0x38)
-        self.frag = int.from_bytes(stream.read(4), byteorder='big')
+        self.frag = int.from_bytes(stream.read(4), byteorder=endianness)
         # fs_bshift
         stream.seek(0x10000 + 0x50)
-        self.bshift = int.from_bytes(stream.read(4), byteorder='big')
+        self.bshift = int.from_bytes(stream.read(4), byteorder=endianness)
         # fs_fshift
         stream.seek(0x10000 + 0x54)
-        self.fshift = int.from_bytes(stream.read(4), byteorder='big')
+        self.fshift = int.from_bytes(stream.read(4), byteorder=endianness)
         # fs_fragshift
         stream.seek(0x10000 + 0x60)
-        self.fragshift = int.from_bytes(stream.read(4), byteorder='big')
+        self.fragshift = int.from_bytes(stream.read(4), byteorder=endianness)
         # fs_fsbtodb
         stream.seek(0x10000 + 0x64)
-        self.fsbtodb = int.from_bytes(stream.read(4), byteorder='big')
+        self.fsbtodb = int.from_bytes(stream.read(4), byteorder=endianness)
         # fs_nindir
         stream.seek(0x10000 + 0x74)
-        self.nindir = int.from_bytes(stream.read(4), byteorder='big')
+        self.nindir = int.from_bytes(stream.read(4), byteorder=endianness)
         # fs_inopb
         stream.seek(0x10000 + 0x78)
-        self.inopb = int.from_bytes(stream.read(4), byteorder='big', signed=False)
+        self.inopb = int.from_bytes(stream.read(4), byteorder=endianness, signed=False)
         # fsipg
         stream.seek(0x10000 + 0xB8)
-        self.ipg = int.from_bytes(stream.read(4), byteorder='big')
+        self.ipg = int.from_bytes(stream.read(4), byteorder=endianness)
         # fsfpg
         stream.seek(0x10000 + 0xBC)
-        self.fpg = int.from_bytes(stream.read(4), byteorder='big')
+        self.fpg = int.from_bytes(stream.read(4), byteorder=endianness)
 
         Logger.log(\
             f"ipg: {self.ipg:X}\nfpg: {self.fpg:X}\niblkno: {self.iblkno:X}\
@@ -91,8 +93,6 @@ def ino_to_offset(sb, ino):
     inode_offset = (ino - (sb.ipg * cyl_index)) * 0x100
     return cyl_offset + inode_table_offset + inode_offset
 
-
-
 """
 struct    direct {
     u_int32_t d_ino;        /* inode number of entry */
@@ -102,7 +102,7 @@ struct    direct {
     char      d_name[MAXNAMLEN + 1];/* name with length <= MAXNAMLEN */
 };
 """
-class Direct(ctypes.BigEndianStructure):
+class Direct(ctypes.BigEndianStructure if endianness is Endianness.BIG else ctypes.LittleEndianStructure):
     _fields_ = [
         ("ino", ctypes.c_uint32),       # 0x00
         ("reclen", ctypes.c_uint16),    # 0x04
@@ -125,7 +125,7 @@ class Direct(ctypes.BigEndianStructure):
             Logger.log(f"Warning: direct {self.get_name()} has no offset set.")
         return self._offset
 
-class Inode(ctypes.BigEndianStructure):
+class Inode(ctypes.BigEndianStructure if endianness is Endianness.BIG else ctypes.LittleEndianStructure):
     _fields_ = [
         ("mode", ctypes.c_uint16),
         ("nlink", ctypes.c_uint16),
@@ -553,7 +553,14 @@ class Scanner2:
         self._initialize(disk)
 
     def _initialize(self, disk):
-        partition = disk.getPartitionByName('dev_hdd0')
+
+        if endianness is Endianness.BIG:
+            # PS3
+            partition = disk.getPartitionByName('dev_hdd0')
+        elif endianness is Endianness.LITTLE:
+            # PS4
+            partition = disk.getPartitionByName('user')
+        
         self._stream = partition.getDataProvider()
         Logger.log(f"Disk Size: {self._stream.getLength()} bytes")
 
@@ -582,7 +589,7 @@ class Scanner2:
     
     def _is_valid_block_table(self, indexes):
         for x in range(2+12+3):
-            index = int.from_bytes(indexes[(x*8):(x*8)+8], byteorder='big')
+            index = int.from_bytes(indexes[(x*8):(x*8)+8], byteorder=endianness)
             if -1 <= index > self.max_block_index:
                 return False
         return True
@@ -728,8 +735,9 @@ class Scanner2:
                             if test2:
                                 # We found a direct table, so lets read out the entire table
                                 directory = self._extract_directs(offset+block)
-                                self._scan_results.directsList.extend(directory.get_directs())
-                                self._scan_results.directoryMap[offset+block] = directory
+                                if directory:
+                                    self._scan_results.directsList.extend(directory.get_directs())
+                                    self._scan_results.directoryMap[offset+block] = directory
 
                         bytesLeft -= bufSize
                         offset += bufSize
@@ -1139,8 +1147,7 @@ class Scanner2:
 
         # Initial buffer
         self._stream.seek(addr)
-        # NOTE: Testing if we should continue beyond the block size with the *2
-        buf = self._stream.read(self._sblk.bsize*2)
+        buf = self._stream.read(self._sblk.bsize)
 
         offset = 0
         direct = self.read_direct(buf, offset)
@@ -1202,8 +1209,8 @@ class Scanner2:
         buf = bytearray(buffer[offset:offset+8])
         direct = Direct.from_buffer(buf)
 
-        if direct.ino > self._ninodes:
-            return None
+        #if direct.ino > self._ninodes:
+        #    return None
 
         if direct.reclen % 4 != 0:
             return None
@@ -1214,7 +1221,7 @@ class Scanner2:
         if direct.namlen > 255 or direct.namlen == 0:
             return None
 
-        if direct.type not in (0,1,2,3,4,6,8,10,12,14):
+        if direct.type not in (0,1,2,3,4,6,8,10,12,14,0x88): # 0x88 is a weird PS4 thing
             return None
 
         if len(buffer) < 0x8 + direct.namlen:
@@ -1715,7 +1722,25 @@ def main(path, keyfile=None, deep_scan=False):
             Logger.log("\nDecrypted drive support is broken currently... \nOpen an encrypted drive with a keyfile")
 
         disk = disklib.DiskFormatFactory.detect(config)
-        
+
+        disk_stream = disk.getDataProvider()
+
+        ps3_magic1 = bytes.fromhex('0FACE0FF')
+        ps3_magic2 = bytes.fromhex('DEADFACE')
+        disk_stream.seek(0x14)
+        magic1 = disk_stream.read(0x4)
+        disk_stream.seek(0x1C)
+        magic2 = disk_stream.read(0x4)
+
+        global endianness
+
+        if ps3_magic1 == magic1 or ps3_magic2 == magic2:
+            endianness = Endianness.BIG
+            Logger.log("Scanning PS3 HDD img...")
+        else:
+            Logger.log("Scanning PS4 HDD img...")
+            endianness = Endianness.LITTLE
+
         scanner = Scanner2(disk, 0x200)
         
         load_path = os.path.normpath(f"{os.getcwd()}\\scans") + "\\" + os.path.basename(path).split(".")[0]
