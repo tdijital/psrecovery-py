@@ -79,10 +79,9 @@ class SuperBlock():
         self.fpg = int.from_bytes(stream.read(4), byteorder='big')
 
         Logger.log(\
-            f"ipg: {self.ipg}\nfpg: {self.fpg}\niblkno: {self.iblkno}\
-            \ninopb: {self.inopb} \nfsize: {self.fsize} \nbsize: {self.bsize}\
-            \nfsbtodb: {self.fsbtodb} \nbshift: {self.bshift}\nfshift: {self.fshift}\
-            \nfragshift: {self.fragshift} \nnindir: {self.nindir}")
+            f"ipg: {self.ipg:X}\nfpg: {self.fpg:X}\niblkno: {self.iblkno:X}\
+            \ninopb: {self.inopb:X} \nfsize: {self.fsize:X} \nbsize: {self.bsize:X}\
+            \nfsbtodb: {self.fsbtodb:X} \nbshift: {self.bshift:X}\nnindir: {self.nindir:X}")
 
 
 def ino_to_offset(sb, ino):
@@ -177,16 +176,19 @@ class Inode(ctypes.BigEndianStructure):
             sb:SuperBlock = super_block
             if max_bindex < blocktable_index:
                 Logger.log(f"Warning block table index is out of bounds: {blocktable_index:X}")
-                blocktable_index = 0
+                return
             block_table_offset = blocktable_index * sb.fsize
-            blocks_indexes = []
             stream.seek(block_table_offset)
+            blocks_indexes = []
             blockcount = 0
             while blockcount < sb.nindir:
                 block_index = struct.unpack(">Q", stream.read(8))[0]
-                Logger.log(f"read block [{blockcount}] index: {block_index:X} at offset 0x{block_table_offset + (blockcount*0x8):X}")
+                if max_bindex < block_index:
+                    Logger.log(f"Warning block index is out of bounds: {blocktable_index:X}")
+                    break
                 if block_index == 0:
                     break
+                Logger.log(f"Read block [{blockcount}] index: {block_index:X} at offset 0x{block_table_offset + (blockcount*0x8):X}")
                 blocks_indexes.append(block_index)
                 blockcount += 1
             return blocks_indexes
@@ -300,10 +302,24 @@ class Node:
     def get_children(self):
         return self._children
     def add_child(self, child):
+        for node in self._children:
+            if node.get_direct_offset() == child.get_direct_offset():
+                Logger.log(f"[!] [Matching Direct]  Skipping add child {child.get_name()} because it already exists in {self._name}")
+                return
+            if node.get_inode_offset() == child.get_direct_offset():
+                Logger.log(f"[!] [Matching Inode]   2 Skipping add child {child.get_name()} because it already exists in {self._name}")
+                return
         self._children.append(child)
     def get_parents(self):
         return self._parents
     def add_parent(self, parent):
+        for node in self.get_parents():
+            if node.get_direct_offset() == parent.get_direct_offset():
+                Logger.log(f"[!] [Matching Direct]  Skipping add parent {parent.get_name()} because {self._name} is already a child ")
+                return
+            if node.get_inode_offset() == parent.get_inode_offset():
+                Logger.log(f"[!] [Matching Inode]   Skipping add parent {parent.get_name()} because {self._name} is already a child ")
+                return
         self._parents.append(parent)
     def __repr__(self):
         return self.get_name()
@@ -665,15 +681,12 @@ class Scanner2:
 
             # Start scan for deleted files
             if deep_scan is False :
-                for cyl in range(self._sblk.ncg): #range(151, 345): #self._ncg):
+                for cyl in range(self._sblk.ncg):
                     cyl_offset = (self._sblk.fpg * self._sblk.fsize) * cyl
                     Logger.log(f"Scanning cylinder group: {cyl}: {cyl_offset:X}")
 
                     # Read in the inode table
                     inode_table_offset = cyl_offset + inode_block_offset
-                    # inode_table_size = self.ipg * 0x100
-                    # self._stream.seek(inode_table_offset, 0)
-                    # inode_table = self._stream.read(inode_table_size)
 
                     # Check for any deleted inodes
                     # We go through each inode in the inode table
@@ -694,17 +707,17 @@ class Scanner2:
                     data_start = cyl_offset + data_block_offset
                     data_end = data_start + data_block_length
 
-                    # Check the data block sections at a time for direct tables
+                    # Check the data block sections one at a time for direct tables
                     offset = data_start
                     bytesLeft = data_block_length
                     while offset < data_end:
                         # Logger.log(hex(offset))
                         # Load a buffer into memory
                         self._stream.seek(offset, 0)
-                        bufSize = min(bytesLeft, 0x100000)
+                        bufSize = min(bytesLeft, self._sblk.bsize)
                         buf = self._stream.read(bufSize)
                         # Check every 0x800 bytes in the buffer for a direct table
-                        for block in range(0, bufSize, 0x800):
+                        for block in range(0, bufSize, self._sblk.fsize):
                             # First we'll check the first 0x18 bytes for the first two direct's
                             dirents = buf[block:block+0x18]
                             # These tests check the d_type, d_namlen, and d_name fields
@@ -725,7 +738,7 @@ class Scanner2:
                 #  Deep Scan
                 #
                 drive_length = self._stream.getLength()
-                scan_interval = self.fsize
+                scan_interval = 0x100 # This will take forever but should never miss an inode or direct...
                 for offset in range(0, drive_length, scan_interval):
                     self._stream.seek(offset)
                     direct_check = self._stream.read(0x18)
@@ -799,9 +812,6 @@ class Scanner2:
         # - Missing parent direct
         #   - Group directories by their parent ino
 
-        # List of recovered nodes
-        nodes = []
-
         # Set of claimed inodes
         # This will be used to create nodes for any inodes that aren't claimed
         # by a Direct
@@ -821,33 +831,67 @@ class Scanner2:
 
         # Mapping of Inode to Node
         # This will be used to look up a Node by it's Inode
-        #inodeNodeMap = {}  # Unused at the moment
+        # inodeNodeMap = {}  # Unused at the moment
+
+        # Mapping of direct ino to the Node
+        inoNodeMap = {}
 
         #    
         # Active Filesystem
         #
         # Create directs and directories
+
+        directMap = {}
+
+        active_directories = {}
+
+        def align_to_prev(offset, align):
+            return ((offset - align) + align) & ~(align - 1)
+
+        def add_directory(offset):
+            directory = self._extract_directs(offset, True)
+            self._scan_results.directsList.extend(directory.get_directs())
+            self._scan_results.directoryMap[offset] = directory
+            return directory
+
+        t1 = time.time()
+        # Create active Directories
         for direct_offset in self._active_directs:
-            self._stream.seek(direct_offset-0x18)
-            buf = self._stream.read(self._sblk.bsize)
+            # Check for start of directory aligned to start of fragment
+            read_offset = align_to_prev(direct_offset, self._sblk.fsize)
+            if read_offset in active_directories:
+                continue
+            self._stream.seek(read_offset)
+            buf = self._stream.read(0x9)
             direct = self.read_direct(buf,0)
             if not direct:
-                continue
+                # Check for start of directory aligned to start of block
+                read_offset = align_to_prev(direct_offset, self._sblk.bsize)
+                if read_offset in active_directories:
+                    continue
+                self._stream.seek(read_offset)
+                buf = self._stream.read(0x9)
+                direct = self.read_direct(buf,0)
+                if not direct:
+                    Logger.log(f"WTF?? no directory found for the direct at 0x{direct_offset:X}")
+                    continue
             name = direct.get_name()
             if name == '.':
-                directory = self._extract_directs(direct_offset-0x18, True)
-                self._scan_results.directsList.extend(directory.get_directs())
-                self._scan_results.directoryMap[direct_offset-0x18] = directory
-        
-        # Create inodes
+                if read_offset in active_directories:
+                    continue
+                Logger.log(f"Found active directory at 0x{read_offset:X}")
+                directory = add_directory(read_offset)
+                active_directories[read_offset] = directory     
+        # Create active Inodes + Directs
         for direct_offset in self._active_directs:
             self._stream.seek(direct_offset)
             buf = self._stream.read(0x300) # 255 is the max direct size
             direct = self.read_direct(buf,0)
             if not direct:
                  Logger.log(f"WTF?? direct in active_directs not found at 0x{direct_offset:X}")
-                 continue            
+                 continue       
             direct.set_offset(direct_offset)
+            directMap[direct_offset] = direct
             # Create Inode
             inode_offset = ino_to_offset(self._sblk, direct.ino)
             inode = self._read_inode_at_offset(inode_offset)
@@ -860,11 +904,29 @@ class Scanner2:
 
             if inode_offset not in self._active_inodes:
                 Logger.log(f"WTF?? active direct: {direct._name} is pointing to a non active inode at 0x{inode_offset:X}")
+        # Validate
+        for direct1_offset in self._active_directs:
+            if direct1_offset not in directMap:
+                continue
+            for directory in active_directories.values():
+                found_directory = False
+                directory_directs = directory.get_directs()
+                for direct2 in directory_directs:
+                    if direct1_offset == direct2.get_offset():
+                        # Logger.log(f"Hell yah! Active directory found for direct: {directMap[direct1_offset].get_name()} at 0x{directMap[direct1_offset].get_offset():X}")
+                        found_directory = True
+                        break
+                if found_directory:
+                    break
+            if not found_directory:
+                Logger.log(f"WTF?? No active directory found for direct: {directMap[direct1_offset].get_name()} at 0x{directMap[direct1_offset].get_offset():X}")
+        t2 = time.time()
+        Logger.log(f"Step 0: {t2 - t1}")
         #
         # End Active Filesystem
         #
         
-        # Populate the inoDirectMap
+        # region | Step 1: Populate the inoDirectMap
         t1 = time.time()
         for direct in self._scan_results.directsList:
             if direct.get_offset() in self._active_directs:
@@ -880,8 +942,8 @@ class Scanner2:
                 inoDirectMap[ino] = [direct]
         t2 = time.time()
         Logger.log(f"Step 1: {t2 - t1}")
-
-        # Create an initial list of Node's using Direct's
+        # endregion
+        # region | Step 2: Create an initial list of Node's using Direct's
         t1 = time.time()
         for direct in self._scan_results.directsList:
             if direct._name == '..' or direct._name == '.':
@@ -899,7 +961,7 @@ class Scanner2:
             node.set_inode_offset(inode_offset)
             node.set_name(direct.get_name())
             directNodeMap[direct.get_offset()] = node
-            inode = self._scan_results.inodeMap.get(inode_offset)
+            inode:Inode = self._scan_results.inodeMap.get(inode_offset)
             if not inode:
                 # This will check if there's an inode where the direct expected one
                 Logger.log(f"Warning: Direct {node._name} expected an inode at offset 0x{inode_offset:X} attempting to read one at offset...")
@@ -915,40 +977,20 @@ class Scanner2:
                 node.set_last_access_time(inode.atime)
                 node.set_last_modified_time(inode.mtime)
                 claimedInodes.add(inode.get_offset())
+                if node.get_type() == NodeType.DIRECTORY:
+                    directory_offset = inode.db[0] * self._sblk.fsize
+                    node.set_directory_offset(directory_offset)
+                
+            if direct.ino in inoNodeMap:
+                Logger.log(f"Warning: Another node {inoNodeMap.get(direct.ino).get_name()} already claims ino that {node.get_name()} is claiming")
+            inoNodeMap[direct.ino] = node
             # Add the node to the results
             self._scan_results.nodes.append(node)
         t2 = time.time()
         Logger.log(f"Step 2: {t2 - t1}")
-
+        # endregion
+        # region | Step 3: Parent child relationships using inodes
         t1 = time.time()
-        # Create Node's for any inode's that weren't claimed
-        for inode in self._scan_results.inodeMap.values():
-            if inode.get_offset() in claimedInodes:
-                continue
-            node = None
-            if inode_is_directory(inode):
-                node = Node(NodeType.DIRECTORY)
-            else:
-                node = Node(NodeType.FILE)
-            node.set_inode(inode)
-            node.set_inode_offset(inode.get_offset())
-            node.set_size(inode.size)
-            node.set_creation_time(inode.ctime)
-            node.set_last_access_time(inode.atime)
-            node.set_last_modified_time(inode.mtime)
-            claimedInodes.add(inode.get_offset())
-            #nodes.append(node)
-            self._scan_results.nodes.append(node)
-        t2 = time.time()
-        Logger.log(f"Step 3: {t2 - t1}")
-
-
-        #
-        # Parent child relationships
-        #
-        t1 = time.time()
-        # Now create relationships between nodes
-        # Creates normal relationships with or without the directory name (direct)
         for node in self._scan_results.nodes:
             if node.get_name() == '..' or node.get_name() == '.':
                 continue
@@ -973,50 +1015,96 @@ class Scanner2:
                     claimedDirectories.add(directory.get_offset())
                 else:
                     Logger.log(f"Warning: Node \"{node.get_name()}\" Expected a directory at 0x{offset:X} but none was found.")
-
+        
         t2 = time.time()
-        Logger.log(f"Step 4: {t2 - t1}")
-
-        t1 = time.time()
-        # Connect child directories with parent directories
+        Logger.log(f"Step 3: {t2 - t1}")
+        # endregion
+        # region | Step 4: Connect child directories with parent directories using "." direct
         # Matches direct -> direct[] using the "." (this folder) direct.
+        t1 = time.time()
         for directory in self._scan_results.directoryMap.values():
             if directory.get_offset() in claimedDirectories:
                 continue
             # Get the direct that references the parent directories ino
             upperDirect = directory.get_direct(".")
             # Find the parent direct or directs that claim that ino
-            parentDirects = inoDirectMap.get(upperDirect.ino)
-            if parentDirects:
-                parentFound = False
-                if len(parentDirects) > 1:
-                    Logger.log(f"[!] Warning: Multiple directories could be parents for directs at 0x{directory.get_offset()} ")
-                for pDirect in parentDirects:
-                    # Get the Node of the parent direct
-                    parentNode:Node = directNodeMap.get(pDirect.get_offset())
-                    if not parentNode:
-                        continue
-                    if parentNode.get_type() != NodeType.DIRECTORY:
-                        continue
-                    Logger.log(f" + Found parent directory {pDirect._name} at 0x{pDirect.get_offset()} for directs at 0x{directory.get_offset()}")
-                    parentFound = True
-                    # Get the children of this directory 
-                    for direct in directory.get_directs():
-                        if direct._name == "." or direct._name == "..":
-                            continue
-                        child:Node = directNodeMap.get(direct.get_offset())
-                        Logger.log(f" |- adding child... \"{child.get_name()}\"")
-                        parentNode.add_child(child)
-                        child.add_parent(parentNode)                        
-                if parentFound:
-                    directory_offset = directory.get_offset()
-                    claimedDirectories.add(directory_offset)
-                Logger.log("")
-        t2 = time.time()
-        Logger.log(f"Step 5: {t2 - t1}")
+            parent_directs = inoDirectMap.get(upperDirect.ino)
+            
+            # Nodes that claim to be the parents
+            parent_nodes = []
 
+            if not parent_directs:
+                Logger.log(f"[!] No directs claim the parent ino {upperDirect.ino}\n")
+                continue
+            else:
+                # Collect nodes from the directs
+                for pDirect in parent_directs:
+                    # Get the Node of the parent direct
+                    node:Node = directNodeMap.get(pDirect.get_offset())
+                    parent_nodes.append(node)
+
+            for p_node in parent_nodes:
+                if p_node.get_type() != NodeType.DIRECTORY:
+                    continue
+                # Don't child active nodes to deleted parent nodes
+                if directory.get_offset() in active_directories and not p_node.get_active():
+                    Logger.log(f"[-] Handled: Not adding active directory at 0x{directory.get_offset()} to deleted node {p_node.get_name()}")
+                    continue
+                Logger.log(f" + Found parent directory {p_node._name} at 0x{p_node.get_direct_offset()} for directs at 0x{directory.get_offset()}")
+                # Get the children of this directory 
+                for direct in directory.get_directs():
+                    if direct._name == "." or direct._name == "..":
+                        continue
+                    child:Node = directNodeMap.get(direct.get_offset())
+                    Logger.log(f" |- adding child... \"{child.get_name()}\"")
+                    p_node.add_child(child)
+                    child.add_parent(p_node)
+                                    
+                directory_offset = directory.get_offset()
+                claimedDirectories.add(directory_offset)
+                Logger.log("")
+
+        # for directory in self._scan_results.directoryMap.values():
+        #     dot_direct = directory.get_direct(".")
+        #     dotdot_direct = directory.get_direct("..")
+
+        #     dot_node = inoNodeMap.get(dot_direct.ino)
+        #     dotdot_node = inoNodeMap.get(dotdot_direct.ino)
+
+        #     if not dotdot_node or not dot_node:
+        #         continue
+        #     if dot_node.get_type() != NodeType.DIRECTORY or dotdot_node.get_type() != NodeType.DIRECTORY:
+        #         continue
+
+        #     Logger.log(f"[+] Found parent {dotdot_node.get_name()} for the folder {dot_node.get_name()}")
+        #     dotdot_node.add_child(dot_node)
+        #     dot_node.add_parent(dotdot_node)
+
+        
+        t2 = time.time()
+        Logger.log(f"Step 4: {t2 - t1}")
+        # endregion
+        # region | Step 5: Create nodes for any inode's that weren't claimed
         t1 = time.time()
-        # Create nodes for unclaimed directories
+        for inode in self._scan_results.inodeMap.values():
+            if inode.get_offset() in claimedInodes:
+                continue
+            node = None
+            if inode_is_directory(inode):
+                node = Node(NodeType.DIRECTORY)
+            else:
+                node = Node(NodeType.FILE)
+            node.set_inode(inode)
+            node.set_inode_offset(inode.get_offset())
+            node.set_size(inode.size)
+            node.set_creation_time(inode.ctime)
+            node.set_last_access_time(inode.atime)
+            node.set_last_modified_time(inode.mtime)
+            claimedInodes.add(inode.get_offset())
+            #nodes.append(node)
+            self._scan_results.nodes.append(node)
+        # endregion
+        # region | Step 6: Create nodes for unclaimed directories
         for directory in self._scan_results.directoryMap.values():
             offset = directory.get_offset()
             if offset in claimedDirectories:
@@ -1030,15 +1118,18 @@ class Scanner2:
                 node.add_child(child)
                 child.add_parent(node)
             self._scan_results.nodes.append(node)
+        
         t2 = time.time()
-        Logger.log(f"Step 6: {t2 - t1}")
-
+        Logger.log(f"Step 5: {t2 - t1}")
+        # endregion
+        # region | Step 7: Extract only top level nodes
         root_nodes = []
         for node in self._scan_results.nodes:
             if len(node.get_parents()) == 0:
                 root_nodes.append(node)
 
         # print_directory(root_nodes)
+        # endregion
 
         return root_nodes
 
@@ -1071,7 +1162,7 @@ class Scanner2:
             absolute_offset = (addr+offset)
             #if True:
             if absolute_offset not in self._active_directs and name != "." and name != "..":
-                Logger.log(f"Deleted direct found at offset {absolute_offset:X}: {name}")
+                Logger.log(f"Direct found at offset {absolute_offset:X}: {name}")
             if absolute_offset not in self._active_directs or extract_active:
                 direct.set_name(name)
                 direct.set_offset(addr+offset)
@@ -1126,6 +1217,9 @@ class Scanner2:
         if direct.type not in (0,1,2,3,4,6,8,10,12,14):
             return None
 
+        if len(buffer) < 0x8 + direct.namlen:
+            return None
+
         name = ''
         try:
             name = buffer[offset+8:offset+8+direct.namlen].decode('utf-8', "ignore")
@@ -1156,7 +1250,7 @@ import tkinter as tk
 import tkinter.ttk as ttk
 from tkinter import simpledialog
 from tkinter import filedialog
-from tkinter import Entry, Label
+from tkinter import Entry, Label, Menu
 import time
 from PIL import Image, ImageTk
 
@@ -1171,38 +1265,59 @@ class App(tk.Frame):
         self.recovered_files = 0
         self.recovered_inodes = 0
         self.recovered_directs = 0
+        self._nodes = nodes
         
-        # Disk
+        # File System
         self._partition = disk.getPartitionByName('dev_hdd0')
         self._stream = self._partition.getDataProvider()
 
         self.max_block_index = self._partition.getLength() / self._super_block.fsize
 
+        # Tkinter
         self._master = master
-        self._master.geometry("1200x800")
-        self._nodes = nodes
-
+        self._master.geometry("1280x960")
         tk.Frame.__init__(self, master)
+        
+        tab_control = ttk.Notebook(master)
 
-        self.pack(fill='both', expand=True)
-        # mainframe = tk.Frame(self)
-        # mainframe.pack(fill='both', expand=True)
-        tree_columns = ('filesize', 'cdate', 'mdate', 'adate', 'doff', 'ioff', 'hino')
-        self.tree = ttk.Treeview(self, columns=tree_columns)
-        ysb = ttk.Scrollbar(self, orient='vertical', command=self.tree.yview)
-        xsb = ttk.Scrollbar(self, orient='horizontal', command=self.tree.xview)
-        self.tree.configure(yscroll=ysb.set, xscroll=xsb.set)
-        self.tree.heading('#0', text='Contents', anchor='w')
-        self.tree.heading('filesize', text='File Size', anchor="w") #, command=lambda: self.sort_column(2, False))
-        self.tree.heading('cdate', text='Date Created', anchor="w")
-        self.tree.heading('mdate', text='Date Modified', anchor="w")
-        self.tree.heading('adate', text='Date Accessed', anchor="w")
-        #self.tree.heading('doff', text='Direct Offset')
-        #self.tree.heading('ioff', text='Inode Offset')
-        #self.tree.heading('hino', text='Has Inode')
+        # Menubar
+        menubar = Menu(self._master)
+        self._master.config(menu=menubar)
 
-        self.grid_rowconfigure(0, weight=1)
-        self.grid_columnconfigure(0, weight=1)
+        file_menu = Menu(menubar, tearoff=0)
+        menubar.add_cascade(label="File", menu=file_menu)
+
+        file_menu.add_command(label="Scan Image")
+        file_menu.add_command(label="Scan Image (Encrypted)")
+        file_menu.add_separator()
+        file_menu.add_command(label="Run File Carver")
+        file_menu.add_command(label="Run UE3 Carver")
+
+
+        # Tab: File System
+        tab_fs = ttk.Frame(tab_control)
+
+        tab_fs.pack(fill='both', expand=True)
+        tree_columns = ('filesize', 'cdate', 'mdate', 'adate')
+        self.fs_tree = ttk.Treeview(tab_fs, columns=tree_columns)
+        ysb = ttk.Scrollbar(tab_fs, orient='vertical', command=self.fs_tree.yview)
+        xsb = ttk.Scrollbar(tab_fs, orient='horizontal', command=self.fs_tree.xview)
+        self.fs_tree.configure(yscroll=ysb.set, xscroll=xsb.set)
+        self.fs_tree.heading('#0', text='Contents', anchor='w')
+        self.fs_tree.heading('filesize', text='File Size', anchor="w") #, command=lambda: self.sort_column(2, False))
+        self.fs_tree.heading('cdate', text='Date Created', anchor="w")
+        self.fs_tree.heading('mdate', text='Date Modified', anchor="w")
+        self.fs_tree.heading('adate', text='Date Accessed', anchor="w")
+
+        tab_fs.grid_rowconfigure(0, weight=1)
+        tab_fs.grid_columnconfigure(0, weight=1)
+
+        # Tab: File Carver
+        tab_carver = ttk.Frame(tab_control)
+
+        tab_control.add(tab_fs, text="File System")
+        tab_control.add(tab_carver, text="File Carver")
+        tab_control.pack(expand = 1, fill ="both")
 
         self.folder_ico = ImageTk.PhotoImage(Image.open('assets/icon-folder.png'))
         self.folder_direct_ico = ImageTk.PhotoImage(Image.open('assets/icon-folder-direct.png'))
@@ -1217,10 +1332,10 @@ class App(tk.Frame):
         
 
         # Make the content column wider than others
-        self.tree.column("#0", minwidth=0, width=400)
+        self.fs_tree.column("#0", minwidth=0, width=400)
 
         # self.pack()
-        root_node = self.tree.insert('', tk.END, text='Root', image=self.folder_direct_ref_ico)
+        root_node = self.fs_tree.insert('', tk.END, text='Root', image=self.folder_direct_ref_ico)
         self.node_map = {}
         Logger.log("Processing directories...")
         self.process_directory(root_node, nodes)
@@ -1229,10 +1344,10 @@ class App(tk.Frame):
         Logger.log(f"Directs: {self.recovered_directs} directs!")
         Logger.log("Sorting directories...")
         # self.sort_root_folders_to_top()
-        # self.tree.grid(sticky='nesw')
-        # self.tree.pack(side='left', fill='both', expand=True)
+        # self.fs_tree.grid(sticky='nesw')
+        # self.fs_tree.pack(side='left', fill='both', expand=True)
 
-        self.tree.grid(row=0, column=0, sticky='nesw')
+        self.fs_tree.grid(row=0, column=0, sticky='nesw')
         ysb.grid(row=0, column=1, sticky='ns')
         xsb.grid(row=1, column=0, sticky='ew')
         # self.grid()
@@ -1246,13 +1361,13 @@ class App(tk.Frame):
                                       command=self.recover_selected_files)
         self.context_menu.add_command(label='Get Info',
                                       command=self.display_file_info)
-        self.tree.bind("<ButtonRelease-3>", self.open_context_menu)
+        self.fs_tree.bind("<ButtonRelease-3>", self.open_context_menu)
     
     def open_context_menu(self, event):
-        item = self.tree.identify('row', event.x, event.y)
+        item = self.fs_tree.identify('row', event.x, event.y)
         self.item_right_click_on = item
-        #self.tree.selection_set(item)
-        #self.tree.focus(item)
+        #self.fs_tree.selection_set(item)
+        #self.fs_tree.focus(item)
         self.context_menu.tk_popup( event.x_root + 60, event.y_root + 10, 0)
     
     def identify_file(self, node):
@@ -1273,7 +1388,7 @@ class App(tk.Frame):
     def display_file_info(self):
         info_window = tk.Toplevel()
         info_window.geometry("250x200")
-        info_window.title(f"{self.tree.item(self.item_right_click_on)['text']} Info")
+        info_window.title(f"{self.fs_tree.item(self.item_right_click_on)['text']} Info")
 
         def add_attribute_row_item(label, value, row):
             entryText = tk.StringVar()
@@ -1284,20 +1399,23 @@ class App(tk.Frame):
             entry.grid(row=row, column=1)
 
         add_attribute_row_item( "Filename: ",
-                                self.tree.item(self.item_right_click_on)['text'],
+                                self.fs_tree.item(self.item_right_click_on)['text'],
                                 0)
         add_attribute_row_item( "Direct Offset: ",
                                 self.node_map[self.item_right_click_on].get_direct_offset(),
                                 1)
+        add_attribute_row_item( "Directory Offset: ",
+                                self.node_map[self.item_right_click_on].get_directory_offset(),
+                                2)
         add_attribute_row_item( "Inode Offset: ",
                                 self.node_map[self.item_right_click_on].get_inode_offset(),
-                                2)
+                                3)
         add_attribute_row_item( "Has Inode: ",
                                 'True' if self.node_map[self.item_right_click_on].get_inode() else 'False',
-                                3)
+                                4)
         add_attribute_row_item( "Node ID: ",
                                 id(self.node_map[self.item_right_click_on]),
-                                4)
+                                5)
         
     def recover_selected_files(self):
         outpath = filedialog.askdirectory()
@@ -1305,7 +1423,7 @@ class App(tk.Frame):
             return 
         Logger.log("Recover files...")
         recover_items = []
-        for item in self.tree.selection():
+        for item in self.fs_tree.selection():
             recover_items.append(item)
             child_items = self.get_all_nodes(item)
             for item in child_items:
@@ -1344,7 +1462,7 @@ class App(tk.Frame):
                     while remaining > 0:
                         index = block_indexes[block_count]
                         if index > self.max_block_index:
-                            Logger.log(f"Error: out of bounds index: {index:X} in {item_path}{self.tree.item(item)['text']} - File is corrupt")
+                            Logger.log(f"Error: out of bounds index: {index:X} in {item_path}{self.fs_tree.item(item)['text']} - File is corrupt")
                             index = 0
                         data_offset = index * self._super_block.fsize
                         self._stream.seek(data_offset)
@@ -1353,12 +1471,12 @@ class App(tk.Frame):
                         file_bytes += self._stream.read(read)
                         remaining -= read
                         block_count += 1
-                    Logger.log(f"Recovered: {item_path}{self.tree.item(item)['text']}")
+                    Logger.log(f"Recovered: {item_path}{self.fs_tree.item(item)['text']}")
                 else:
-                    Logger.log(f"Recovered [Direct Only]: {item_path}{self.tree.item(item)['text']}")
+                    Logger.log(f"Recovered [Direct Only]: {item_path}{self.fs_tree.item(item)['text']}")
                 
                 # Write the file     
-                file_path = fullpath + "\\" + self.tree.item(item)['text']
+                file_path = fullpath + "\\" + self.fs_tree.item(item)['text']
                 file_path = os.path.normpath(file_path)
 
                 with open(file_path, 'wb') as f:
@@ -1381,37 +1499,37 @@ class App(tk.Frame):
 
     def get_item_full_path(self, item):
         path = ""
-        current_parent = str(self.tree.parent(item))
+        current_parent = str(self.fs_tree.parent(item))
         while True:
             if current_parent == "I001":
                 return path
-            path = self.tree.item(current_parent)['text'] + "\\" + path
-            current_parent = str(self.tree.parent(current_parent))
+            path = self.fs_tree.item(current_parent)['text'] + "\\" + path
+            current_parent = str(self.fs_tree.parent(current_parent))
 
     def get_all_nodes(self, node=None):
         nodes = []
-        for child in self.tree.get_children(node):
+        for child in self.fs_tree.get_children(node):
             nodes.append(child)
-            if self.tree.get_children(child):
+            if self.fs_tree.get_children(child):
                 nodes.extend(self.get_all_nodes(child))
         return nodes
 
     def sort_column(self, column, reverse):
-        items = self.tree.get_children('I001')
-        l = [(self.tree.set(k, column), k) for k in items]
+        items = self.fs_tree.get_children('I001')
+        l = [(self.fs_tree.set(k, column), k) for k in items]
         l.sort(reverse=reverse)
 
         for index, (val, k) in enumerate(l):
-            self.tree.move(k, '', index)
+            self.fs_tree.move(k, '', index)
         
-        self.tree.heading(column, command=lambda: \
+        self.fs_tree.heading(column, command=lambda: \
             self.sort_column(column, not reverse))
 
     def sort_root_folders_to_top(self):
-        items = self.tree.get_children('I001')
+        items = self.fs_tree.get_children('I001')
         for item in items:
             if self.node_map[item].get_type() == NodeType.DIRECTORY:
-                self.tree.move(item,'I001',0)
+                self.fs_tree.move(item,'I001',0)
 
     def find_text(self, query, start=None, reversed=False):
         start_index = 0
@@ -1423,23 +1541,23 @@ class App(tk.Frame):
                 if node == start:
                     start_index = i
         for i in range(start_index+offset, end_index, increment):
-            text = self.tree.item(self._nodes[i])['text']
+            text = self.fs_tree.item(self._nodes[i])['text']
             if query in text.lower():
                 return self._nodes[i]
         for i in range(end_index, start_index, increment):
-            text = self.tree.item(self._nodes[i])['text']
+            text = self.fs_tree.item(self._nodes[i])['text']
             if query in text.lower():
                 return self._nodes[i]
         return None
     
     def find_next(self, event, reversed=False):
         if self._search_text != '':
-            focused = self.tree.focus()
+            focused = self.fs_tree.focus()
             found = self.find_text(self._search_text, focused, reversed)
             if found:
-                self.tree.see(found)
-                self.tree.focus(found)
-                self.tree.selection_set(found)
+                self.fs_tree.see(found)
+                self.fs_tree.focus(found)
+                self.fs_tree.selection_set(found)
 
     def find(self, event):
         Logger.log("Find")
@@ -1447,12 +1565,12 @@ class App(tk.Frame):
             parent=self)
         if query:
             self._search_text = query.lower()
-            focused = self.tree.focus()
+            focused = self.fs_tree.focus()
             found = self.find_text(self._search_text, focused)
             if found:
-                self.tree.see(found)
-                self.tree.focus(found)
-                self.tree.selection_set(found)
+                self.fs_tree.see(found)
+                self.fs_tree.focus(found)
+                self.fs_tree.selection_set(found)
 
     def check_if_inode_indexes_valid(self, node):
         def check_if_indexes_valid(indexes):
@@ -1550,15 +1668,16 @@ class App(tk.Frame):
             # Name
             name = node.get_name()
             if not node.get_direct() and not node.get_inode() and node.get_directory_offset():
-                name = f"Folder{node.get_directory_offset():X}"
+                if name == None:
+                    name = f"Folder{node.get_directory_offset():X}"
             elif not node.get_direct() and node.get_inode():
-                self.identify_file(node)
+                # self.identify_file(node)
                 if node.get_type != NodeType.DIRECTORY:
                     name = f"Inode{node.get_inode_offset():X}{node._filesignature.extension if node._filesignature is not None else ''}"
                 else:
                     name = f"Folder{node.get_inode_offset():X}{node._filesignature.extension if node._filesignature is not None else ''}"
             # Tree Item
-            item = self.tree.insert(parent, tk.END, text=name,
+            item = self.fs_tree.insert(parent, tk.END, text=name,
                 values=(
                 f'{self.format_bytes(size):<10} ({size} bytes)' if size else '',
                 time.ctime(ctime) if ctime and ctime < 32536799999 else '',
