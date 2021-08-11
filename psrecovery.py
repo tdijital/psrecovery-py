@@ -581,6 +581,8 @@ class Scanner2:
         self._active_directs = self._get_all_offsets(root, 'dirent')
         self._ninodes = (self._sblk.ipg * self._sblk.ncg)
         self.max_block_index = self._stream.getLength() / self._sblk.fsize
+        self.inode_class = get_inode_class()
+        self.direct_class = get_direct_class()
     
     def _get_all_offsets(self, root, key):
         """Get all tables from a directory"""
@@ -609,7 +611,7 @@ class Scanner2:
         if not self._is_valid_block_table(indexes):
             return None
         # Create the inode
-        inode = get_inode_class().from_buffer(bytearray(data))
+        inode = self.inode_class().from_buffer(bytearray(data))
         inode.set_offset(offset)
         # More checks
         if inode.mode == 0:
@@ -660,7 +662,7 @@ class Scanner2:
                     continue
                 self._stream.seek(offset)
                 data = self._stream.read(0x100)
-                inode = get_inode_class().from_buffer(bytearray(data))
+                inode = self.inode_class().from_buffer(bytearray(data))
                 if inode.mode == 0:
                     continue
                 if inode.nlink > 0x10:
@@ -1212,7 +1214,7 @@ class Scanner2:
 
     def read_direct(self, buffer, offset):
         buf = bytearray(buffer[offset:offset+8])
-        direct = get_direct_class().from_buffer(buf)
+        direct = self.direct_class().from_buffer(buf)
 
         #if direct.ino > self._ninodes:
         #    return None
