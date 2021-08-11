@@ -685,8 +685,8 @@ class Scanner2:
             # There are no saved results, let's start a new scan
             Logger.log(f"No previous scan found in {loadpath}")
             Logger.log("Scanning drive")
-            assert(ctypes.sizeof(Direct) == 0x8)
-            assert(ctypes.sizeof(Inode) == 0x100)
+            assert(ctypes.sizeof(self.direct_class) == 0x8)
+            assert(ctypes.sizeof(self.inode_class) == 0x100)
 
             inode_block_offset = self._sblk.iblkno * self._sblk.fsize
             data_block_offset = self._sblk.dblkno * self._sblk.fsize
@@ -976,7 +976,7 @@ class Scanner2:
             node.set_inode_offset(inode_offset)
             node.set_name(direct.get_name())
             directNodeMap[direct.get_offset()] = node
-            inode:Inode = self._scan_results.inodeMap.get(inode_offset)
+            inode = self._scan_results.inodeMap.get(inode_offset)
             if not inode:
                 # This will check if there's an inode where the direct expected one
                 Logger.log(f"Warning: Direct {node._name} expected an inode at offset 0x{inode_offset:X} attempting to read one at offset...")
@@ -1011,7 +1011,7 @@ class Scanner2:
                 continue
             if node.get_type() is not NodeType.DIRECTORY:
                 continue
-            inode:Inode = node.get_inode()
+            inode = node.get_inode()
             if not inode:
                 continue
             if not inode_is_directory(inode):
@@ -1216,8 +1216,8 @@ class Scanner2:
         buf = bytearray(buffer[offset:offset+8])
         direct = self.direct_class.from_buffer(buf)
 
-        if direct.ino > self._ninodes:
-            return None
+        #if direct.ino > self._ninodes:
+        #    return None
 
         if direct.reclen % 4 != 0:
             return None
@@ -1386,7 +1386,7 @@ class App(tk.Frame):
     
     def identify_file(self, node):
         if node.get_direct() is None:
-            inode:Inode = node.get_inode()
+            inode = node.get_inode()
             file_offset = inode.db[0] * self._super_block.fsize
             idenfified = False
             if(file_offset > self.max_block_index):
