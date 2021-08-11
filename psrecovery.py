@@ -611,7 +611,7 @@ class Scanner2:
         if not self._is_valid_block_table(indexes):
             return None
         # Create the inode
-        inode = self.inode_class().from_buffer(bytearray(data))
+        inode = self.inode_class.from_buffer(bytearray(data))
         inode.set_offset(offset)
         # More checks
         if inode.mode == 0:
@@ -662,7 +662,7 @@ class Scanner2:
                     continue
                 self._stream.seek(offset)
                 data = self._stream.read(0x100)
-                inode = self.inode_class().from_buffer(bytearray(data))
+                inode = self.inode_class.from_buffer(bytearray(data))
                 if inode.mode == 0:
                     continue
                 if inode.nlink > 0x10:
@@ -1214,10 +1214,10 @@ class Scanner2:
 
     def read_direct(self, buffer, offset):
         buf = bytearray(buffer[offset:offset+8])
-        direct = self.direct_class().from_buffer(buf)
+        direct = self.direct_class.from_buffer(buf)
 
-        #if direct.ino > self._ninodes:
-        #    return None
+        if direct.ino > self._ninodes:
+            return None
 
         if direct.reclen % 4 != 0:
             return None
