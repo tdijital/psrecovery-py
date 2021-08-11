@@ -126,7 +126,7 @@ def get_direct_class():
                 self._offset = 0
                 Logger.log(f"Warning: direct {self.get_name()} has no offset set.")
             return self._offset
-    return Direct()
+    return Direct
 
 def get_inode_class():
     class Inode(ctypes.BigEndianStructure if endianness is Endianness.BIG else ctypes.LittleEndianStructure):
@@ -227,7 +227,7 @@ def get_inode_class():
                         indexes += read_block_indexes(btable_index, 3)
             
             return indexes
-    return Inode()
+    return Inode
 
 
 class NodeType:
