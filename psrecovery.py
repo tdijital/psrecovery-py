@@ -1282,7 +1282,12 @@ class App(tk.Frame):
         self._nodes = nodes
         
         # File System
+        if endianness is Endianness.BIG:
+            # PS3
         self._partition = disk.getPartitionByName('dev_hdd0')
+        elif endianness is Endianness.LITTLE:
+            # PS4
+            self._partition = disk.getPartitionByName('user')
         self._stream = self._partition.getDataProvider()
 
         self.max_block_index = self._partition.getLength() / self._super_block.fsize
