@@ -1714,7 +1714,7 @@ class App(tk.Frame):
 def main(path, keyfile=None, deep_scan=False):
     
     Logger.streams.append(sys.stdout)
-    logfile = open('log.txt','w')
+    logfile = open('log.txt','w', encoding='utf8')
     Logger.streams.append(logfile)
 
     with open(path, 'rb') as fp:
