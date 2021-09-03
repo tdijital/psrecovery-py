@@ -7,6 +7,7 @@ import disklib
 import json
 import time
 import struct
+import math
 
 class Endianness:
     BIG = 'big'
@@ -186,9 +187,12 @@ def get_inode_class():
                 blocks_indexes = []
                 blockcount = 0
                 while blockcount < sb.nindir:
-                    block_index = struct.unpack(">Q", stream.read(8))[0]
+                    if endianness is Endianness.LITTLE:
+                        block_index = struct.unpack("<Q", stream.read(8))[0]
+                    else:
+                        block_index = struct.unpack(">Q", stream.read(8))[0]
                     if max_bindex < block_index:
-                        Logger.log(f"Warning block index is out of bounds: {blocktable_index:X}")
+                        Logger.log(f"Warning block index is out of bounds: {block_index:X}")
                         break
                     if block_index == 0:
                         break
@@ -697,7 +701,7 @@ class Scanner2:
             if deep_scan is False :
                 for cyl in range(self._sblk.ncg):
                     cyl_offset = (self._sblk.fpg * self._sblk.fsize) * cyl
-                    Logger.log(f"Scanning cylinder group: {cyl}: {cyl_offset:X}")
+                    Logger.log(f"Scanning cylinder group: {cyl}/{self._sblk.ncg}: 0x{cyl_offset:X}")
 
                     # Read in the inode table
                     inode_table_offset = cyl_offset + inode_block_offset
@@ -865,6 +869,8 @@ class Scanner2:
 
         def add_directory(offset):
             directory = self._extract_directs(offset, True)
+            if not directory:
+                return None
             self._scan_results.directsList.extend(directory.get_directs())
             self._scan_results.directoryMap[offset] = directory
             return directory
@@ -1176,7 +1182,7 @@ class Scanner2:
             absolute_offset = (addr+offset)
             #if True:
             if absolute_offset not in self._active_directs and name != "." and name != "..":
-                Logger.log(f"Direct found at offset {absolute_offset:X}: {name}")
+                Logger.log(f"Direct found at offset 0x{absolute_offset:X}: {name}")
             if absolute_offset not in self._active_directs or extract_active:
                 direct.set_name(name)
                 direct.set_offset(addr+offset)
@@ -1284,7 +1290,7 @@ class App(tk.Frame):
         # File System
         if endianness is Endianness.BIG:
             # PS3
-        self._partition = disk.getPartitionByName('dev_hdd0')
+            self._partition = disk.getPartitionByName('dev_hdd0')
         elif endianness is Endianness.LITTLE:
             # PS4
             self._partition = disk.getPartitionByName('user')
@@ -1477,16 +1483,17 @@ class App(tk.Frame):
                     block_indexes = inode.get_block_indexes(self._stream, self._super_block)
                     # Read data
                     remaining = node.get_size()
+                    required_blocks = math.ceil(remaining / self._super_block.bsize)
                     block_count = 0
                     while remaining > 0:
+                        if block_count+1 > len(block_indexes):
+                            Logger.log(f"Error: Not all block indexes ({block_count}/{required_blocks}) recovered")
+                            break
                         index = block_indexes[block_count]
-                        if index > self.max_block_index:
-                            Logger.log(f"Error: out of bounds index: {index:X} in {item_path}{self.fs_tree.item(item)['text']} - File is corrupt")
-                            index = 0
                         data_offset = index * self._super_block.fsize
                         self._stream.seek(data_offset)
                         read = min(remaining, self._super_block.bsize)
-                        Logger.log(f"Read {read} bytes at offset: {data_offset:X}")
+                        Logger.log(f"Read {read} bytes at offset: 0x{data_offset:X}")
                         file_bytes += self._stream.read(read)
                         remaining -= read
                         block_count += 1
@@ -1600,7 +1607,7 @@ class App(tk.Frame):
         if node.get_type() == NodeType.FILE:
                 # If an inode exists read the inodes blocks
                 if node.get_inode() is not None:
-                    Logger.log(f"Checking if inode is valid at offset: {node.get_inode_offset():X}")
+                    Logger.log(f"Checking if inode is valid at offset: 0x{node.get_inode_offset():X}")
                     # Check direct blocks
                     for block in node.get_inode().db:
                         if block > self.max_block_index:
@@ -1750,8 +1757,8 @@ def main(path, keyfile=None, deep_scan=False):
             endianness = Endianness.BIG
             Logger.log("Scanning PS3 HDD img...")
         else:
-            Logger.log("Scanning PS4 HDD img...")
             endianness = Endianness.LITTLE
+            Logger.log("Scanning PS4 HDD img...")
 
         scanner = Scanner2(disk, 0x200)
         
