@@ -1218,7 +1218,7 @@ class Scanner2:
             if not direct:
                 if (direct_end + 8) >= 0x4000:
                     Logger.log(f"Log: Hit end of block when parsing direct table at 0x{addr:X}!")
-                #    return result
+                    return result
                 direct = self.read_direct(buf, direct_end)
                 if not direct:
                     return result
