@@ -842,7 +842,7 @@ class Scanner2:
         # Mapping of ino's to direct's
         # This will be used later on for Directory to Direct matching
         # {ino: [directs]}
-        inoDirectMap = {}
+        # inoDirectMap = {}
 
         # Mapping of Direct to Node
         # This will be used to look up a Node by it's Direct
@@ -921,7 +921,7 @@ class Scanner2:
                 continue
             # Add the inode to the map
             self._scan_results.inodeMap[inode_offset] = inode
-            inoDirectMap[direct.ino] = [direct]
+            self._scan_results.inoDirectMap[direct.ino] = [direct]
 
             if inode_offset not in self._active_inodes:
                 Logger.log(f"WTF?? active direct: {direct._name} is pointing to a non active inode at 0x{inode_offset:X}")
@@ -956,57 +956,59 @@ class Scanner2:
             if name == '..' or name == '.':
                 continue
             ino = direct.ino
-            if ino in inoDirectMap:
+            if ino in self._scan_results.inoDirectMap:
                 Logger.log(f"Log: Duplicate ino usage for direct {name} (ino={ino}, direct={direct.get_offset()})")
-                inoDirectMap[ino].append(direct)
+                self._scan_results.inoDirectMap[ino].append(direct)
             else:
-                inoDirectMap[ino] = [direct]
+                self._scan_results.inoDirectMap[ino] = [direct]
         t2 = time.time()
         Logger.log(f"Step 1: {t2 - t1}")
         # endregion
         # region | Step 2: Create an initial list of Node's using Direct's
         t1 = time.time()
-        for direct in self._scan_results.directsList:
-            if direct._name == '..' or direct._name == '.':
-                continue
-            node = None
-            if direct.type == 0x4:
-                node = Node(NodeType.DIRECTORY)
-            else:
-                node = Node(NodeType.FILE)
-            if direct.get_offset() in self._active_directs:
-                node.set_active(True)
-            inode_offset = ino_to_offset(self._sblk, direct.ino)
-            node.set_direct(direct)
-            node.set_direct_offset(direct.get_offset())
-            node.set_inode_offset(inode_offset)
-            node.set_name(direct.get_name())
-            directNodeMap[direct.get_offset()] = node
-            inode = self._scan_results.inodeMap.get(inode_offset)
-            if not inode:
-                # This will check if there's an inode where the direct expected one
-                Logger.log(f"Warning: Direct {node._name} expected an inode at offset 0x{inode_offset:X} attempting to read one at offset...")
-                inode = self._read_inode_at_offset(inode_offset)
+        def create_nodes_from_directs(directs):
+            for direct in directs:
+                if direct._name == '..' or direct._name == '.':
+                    continue
+                node = None
+                if direct.type == 0x4:
+                    node = Node(NodeType.DIRECTORY)
+                else:
+                    node = Node(NodeType.FILE)
+                if direct.get_offset() in self._active_directs:
+                    node.set_active(True)
+                inode_offset = ino_to_offset(self._sblk, direct.ino)
+                node.set_direct(direct)
+                node.set_direct_offset(direct.get_offset())
+                node.set_inode_offset(inode_offset)
+                node.set_name(direct.get_name())
+                directNodeMap[direct.get_offset()] = node
+                inode = self._scan_results.inodeMap.get(inode_offset)
+                if not inode:
+                    # This will check if there's an inode where the direct expected one
+                    Logger.log(f"Warning: Direct {node._name} expected an inode at offset 0x{inode_offset:X} attempting to read one at offset...")
+                    inode = self._read_inode_at_offset(inode_offset)
+                    if inode:
+                        Logger.log("Success! Inode discovered where the Direct expected!")
+                        self._scan_results.inodeMap[inode_offset] = inode
+                # Initaliaze the inode
                 if inode:
-                    Logger.log("Success! Inode discovered where the Direct expected!")
-                    self._scan_results.inodeMap[inode_offset] = inode
-            # Initaliaze the inode
-            if inode:
-                node.set_inode(inode)
-                node.set_size(inode.size)
-                node.set_creation_time(inode.ctime)
-                node.set_last_access_time(inode.atime)
-                node.set_last_modified_time(inode.mtime)
-                claimedInodes.add(inode.get_offset())
-                if node.get_type() == NodeType.DIRECTORY:
-                    directory_offset = inode.db[0] * self._sblk.fsize
-                    node.set_directory_offset(directory_offset)
-                
-            if direct.ino in inoNodeMap:
-                Logger.log(f"Warning: Another node {inoNodeMap.get(direct.ino).get_name()} already claims ino that {node.get_name()} is claiming")
-            inoNodeMap[direct.ino] = node
-            # Add the node to the results
-            self._scan_results.nodes.append(node)
+                    node.set_inode(inode)
+                    node.set_size(inode.size)
+                    node.set_creation_time(inode.ctime)
+                    node.set_last_access_time(inode.atime)
+                    node.set_last_modified_time(inode.mtime)
+                    claimedInodes.add(inode.get_offset())
+                    if node.get_type() == NodeType.DIRECTORY:
+                        directory_offset = inode.db[0] * self._sblk.fsize
+                        node.set_directory_offset(directory_offset)
+                    
+                if direct.ino in inoNodeMap:
+                    Logger.log(f"Warning: Another node {inoNodeMap.get(direct.ino).get_name()} already claims ino that {node.get_name()} is claiming")
+                inoNodeMap[direct.ino] = node
+                # Add the node to the results
+                self._scan_results.nodes.append(node)
+        create_nodes_from_directs(self._scan_results.directsList)
         t2 = time.time()
         Logger.log(f"Step 2: {t2 - t1}")
         # endregion
@@ -1035,7 +1037,13 @@ class Scanner2:
                         child.add_parent(node)
                     claimedDirectories.add(directory.get_offset())
                 else:
-                    Logger.log(f"Warning: Node \"{node.get_name()}\" Expected a directory at 0x{offset:X} but none was found.")
+                    Logger.log(f"Warning: Node \"{node.get_name()}\" Expected a directory at 0x{offset:X} checking if one exists...")
+                    directory = add_directory(offset)
+                    if directory:
+                        Logger.log(f"Success: directory found!")
+                        # create nodes from directory
+                        create_nodes_from_directs(directory.get_directs())
+
         
         t2 = time.time()
         Logger.log(f"Step 3: {t2 - t1}")
@@ -1049,7 +1057,7 @@ class Scanner2:
             # Get the direct that references the parent directories ino
             upperDirect = directory.get_direct(".")
             # Find the parent direct or directs that claim that ino
-            parent_directs = inoDirectMap.get(upperDirect.ino)
+            parent_directs = self._scan_results.inoDirectMap.get(upperDirect.ino)
             
             # Nodes that claim to be the parents
             parent_nodes = []
