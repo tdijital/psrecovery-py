@@ -341,6 +341,8 @@ class Directory:
     def add_direct(self, direct):
         self._directs[direct.get_name()] = direct
     def get_direct(self, name):
+        if not name in self._directs.keys():
+            return None
         return self._directs[name]
     def get_directs(self):
         return self._directs.values()
@@ -1056,6 +1058,8 @@ class Scanner2:
                 continue
             # Get the direct that references the parent directories ino
             upperDirect = directory.get_direct(".")
+            if not upperDirect:
+                continue
             # Find the parent direct or directs that claim that ino
             parent_directs = self._scan_results.inoDirectMap.get(upperDirect.ino)
             
