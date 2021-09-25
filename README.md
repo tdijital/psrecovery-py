@@ -11,6 +11,7 @@ A prototype to explore different recovery techniques for the UFS2 filesystem. Sp
 - [ ] Use file signatures to identify unidentified Inode file types
 - [ ] Use Unreal TOC files to identify inodes with no direct.
 - [ ] Use Unreal TOC files to identify carved files
+- [ ] Create scans folder if it doesn't exist
 
 ### Experimental TODO
 - [ ] Scan for unclaimed inidrect block tables
