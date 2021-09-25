@@ -3,11 +3,13 @@
 .vscode/
 # Log files
 *.log
+log.txt
 # Scan files
 directs.txt
 directories.txt
 inodes.txt
 # Backup your scan files in this folder
 scans/
-
+# Compiled python files
+*.pyc
 
