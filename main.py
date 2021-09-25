@@ -4,11 +4,11 @@ import sys
 import tkinter as tk
 
 import disklib
-from logger import Logger
+from common.logger import Logger
 
-from analyzer import Scanner2
-from app import App
-from ufs import endianness, Endianness
+from analysis.analyzer import Scanner2
+from analysis.ufs import endianness, Endianness
+from gui.app import App
 
 
 def main(path, keyfile=None, deep_scan=False):

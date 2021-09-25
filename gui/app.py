@@ -4,13 +4,13 @@ import time
 import tkinter as tk
 import tkinter.ttk as ttk
 from tkinter import Entry, Label, Menu, PhotoImage, filedialog, simpledialog
-
 from PIL import Image, ImageTk
 
-from analyzer import Node, NodeType
-from carver import all_filesigs
-from logger import Logger
-from ufs import endianness, Endianness
+from analysis.analyzer import Node, NodeType
+from analysis.carver import all_filesigs
+from analysis.ufs import Endianness, endianness
+from common.logger import Logger
+
 
 class App(tk.Frame):
     def __init__(self, master, nodes, disk, super_block):

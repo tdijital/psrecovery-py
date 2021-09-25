@@ -3,8 +3,8 @@ import time
 
 import disklib
 
-from logger import Logger
-from ufs import get_direct_class, get_inode_class, ino_to_offset, SuperBlock, endianness, Endianness
+from common.logger import Logger
+from .ufs import get_direct_class, get_inode_class, ino_to_offset, SuperBlock, endianness, Endianness
 
 def print_directory(root, depth=0):
     for inode in root:

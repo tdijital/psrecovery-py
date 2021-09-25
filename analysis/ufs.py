@@ -1,7 +1,7 @@
 import ctypes
 import struct
 
-from logger import Logger
+from common.logger import Logger
 
 class Endianness:
     BIG = 'big'
