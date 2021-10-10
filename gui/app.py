@@ -4,7 +4,6 @@ import time
 import tkinter as tk
 import tkinter.ttk as ttk
 from tkinter import Entry, Label, Menu, PhotoImage, filedialog, simpledialog
-from PIL import Image, ImageTk
 
 from analysis.analyzer import Node, NodeType
 from analysis.carver import all_filesigs
@@ -80,16 +79,16 @@ class App(tk.Frame):
         tab_control.add(tab_carver, text="File Carver")
         tab_control.pack(expand = 1, fill ="both")
 
-        self.folder_ico = ImageTk.PhotoImage(Image.open('assets/icon-folder.png'))
-        self.folder_direct_ico = ImageTk.PhotoImage(Image.open('assets/icon-folder-direct.png'))
-        self.folder_direct_ref_ico = ImageTk.PhotoImage(Image.open('assets/icon-folder-direct-ref.png'))
-        self.folder_inode_ico = ImageTk.PhotoImage(Image.open('assets/icon-folder-inode.png'))
-        self.folder_recovered_ico = ImageTk.PhotoImage(Image.open('assets/icon-folder-recovered.png'))
-        self.file_ico = ImageTk.PhotoImage(Image.open('assets/icon-file.png'))
-        self.file_direct_ico = ImageTk.PhotoImage(Image.open('assets/icon-file-direct.png'))
-        self.file_inode_ico = ImageTk.PhotoImage(Image.open('assets/icon-file-inode.png'))
-        self.file_warning_ico = ImageTk.PhotoImage(Image.open('assets/icon-file-warning.png'))
-        self.file_recovered_ico = ImageTk.PhotoImage(Image.open('assets/icon-file-recovered.png'))
+        self.folder_ico = PhotoImage(file='assets/icon-folder.gif')
+        self.folder_direct_ico = PhotoImage(file='assets/icon-folder-direct.gif')
+        self.folder_direct_ref_ico = PhotoImage(file='assets/icon-folder-direct-ref.gif')
+        self.folder_inode_ico = PhotoImage(file='assets/icon-folder-inode.gif')
+        self.folder_recovered_ico = PhotoImage(file='assets/icon-folder-recovered.gif')
+        self.file_ico = PhotoImage(file='assets/icon-file.gif')
+        self.file_direct_ico = PhotoImage(file='assets/icon-file-direct.gif')
+        self.file_inode_ico = PhotoImage(file='assets/icon-file-inode.gif')
+        self.file_warning_ico = PhotoImage(file='assets/icon-file-warning.gif')
+        self.file_recovered_ico = PhotoImage(file='assets/icon-file-recovered.gif')
         
 
         # Make the content column wider than others
