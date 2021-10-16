@@ -2,8 +2,9 @@ import math
 import os
 import time
 import tkinter as tk
+from tkinter.constants import BOTH, DISABLED, LEFT, NORMAL
 import tkinter.ttk as ttk
-from tkinter import Entry, Label, Menu, PhotoImage, filedialog, simpledialog
+from tkinter import Entry, Label, Menu, PhotoImage, Button, Radiobutton, Text, filedialog, simpledialog
 
 from analysis.analyzer import Node, NodeType
 from analysis.carver import all_filesigs
@@ -47,17 +48,15 @@ class App(tk.Frame):
         file_menu = Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
 
-        file_menu.add_command(label="Scan Image")
-        file_menu.add_command(label="Scan Image (Encrypted)")
+        file_menu.add_command(label="Open Image",command=self.display_open_image_modal)
         file_menu.add_separator()
         file_menu.add_command(label="Run File Carver")
-        file_menu.add_command(label="Run UE3 Carver")
 
 
         # Tab: File System
         tab_fs = ttk.Frame(tab_control)
 
-        tab_fs.pack(fill='both', expand=True)
+        tab_fs.pack(fill=BOTH, expand=True)
         tree_columns = ('filesize', 'cdate', 'mdate', 'adate')
         self.fs_tree = ttk.Treeview(tab_fs, columns=tree_columns)
         ysb = ttk.Scrollbar(tab_fs, orient='vertical', command=self.fs_tree.yview)
@@ -77,7 +76,7 @@ class App(tk.Frame):
 
         tab_control.add(tab_fs, text="File System")
         tab_control.add(tab_carver, text="File Carver")
-        tab_control.pack(expand = 1, fill ="both")
+        tab_control.pack(expand = 1, fill =BOTH)
 
         self.folder_ico = PhotoImage(file='assets/icon-folder.gif')
         self.folder_direct_ico = PhotoImage(file='assets/icon-folder-direct.gif')
@@ -123,6 +122,9 @@ class App(tk.Frame):
                                       command=self.display_file_info)
         self.fs_tree.bind("<ButtonRelease-3>", self.open_context_menu)
     
+    def display_open_image_modal(self):
+        open_image_modal = OpenHDDImageModal()
+
     def open_context_menu(self, event):
         item = self.fs_tree.identify('row', event.x, event.y)
         self.item_right_click_on = item
@@ -457,4 +459,57 @@ class App(tk.Frame):
                 return "%3.2f%s" % (filesize, count)
             filesize /= 1024.0
         return "%3.2f%s" % (filesize, 'TB')
+
+class OpenHDDImageModal(tk.Frame):
+    def __init__(self):
+        
+        # Init Vars
+        self.default_text_browse_img = "Browse for HDD img..."
+        self.default_text_browse_eid = "Browse for EID key..."
+        self.img_path_text = tk.StringVar()
+        self.img_path_text.set(self.default_text_browse_img)
+        self.eid_path_text = tk.StringVar()
+        self.eid_path_text.set(self.default_text_browse_eid)
+        self.deep_scan = tk.IntVar()
+        self.deep_scan.set(1)
+
+        # GUI
+        self.modal = tk.Toplevel()
+        self.modal.geometry("460x150")
+        self.modal.title("Open PS3 or PS4 HDD Img...")
+        self.entry_image_path = Entry(self.modal, textvariable=self.img_path_text, fg="#AAAAAA")
+        self.entry_image_path.place(x=10,y=10,width=390,height=28)
+        img_browser_btn = Button(self.modal, text="Browse", command=self.open_filedialog_image).place(x=400,y=10)
+        self.entry_eid_path = Entry(self.modal, textvariable=self.eid_path_text, fg="#AAAAAA")
+        self.entry_eid_path.place(x=10,y=40,width=390,height=28)
+        eid_browse_btn = Button(self.modal, text="Browse", command=self.open_filedialog_eid).place(x=400,y=40)
+        fast_scan = Radiobutton(self.modal, text="Fast Scan*", variable=self.deep_scan, value=1).place(x=10,y=70)
+        deep_scan = Radiobutton(self.modal, text="Deep Scan", variable=self.deep_scan, value=2).place(x=100,y=70)
+        help_label = Label(self.modal, text="*Fast scan is much faster and more reliable.", font=("Arial", 8), fg="#AAAAAA", justify=LEFT, anchor="w").place(x=10,y=90,width=450,height=20)
+        self.scan_btn = Button(self.modal, text="Scan", command=self.begin_scan, state=DISABLED)
+        self.scan_btn.place(x=400,y=120)
+
+    def open_filedialog_image(self):
+        outpath = filedialog.askopenfilename(title="Open a PS3 or PS4 img...", filetypes=[('HDD Image', '*.img')], initialdir='/')
+        if(outpath == ""):
+            return
+        self.img_path_text.set(outpath)
+        self.scan_btn['state'] = NORMAL
+        self.modal.lift()
+        self.entry_image_path['fg'] = "#000000"
+    
+    def open_filedialog_eid(self):
+        initialdir = "/"
+        if(self.img_path_text.get() != self.default_text_browse_img) :
+            initialdir = os.path.dirname(self.img_path_text.get())
+        outpath = filedialog.askopenfilename(title="Open EID key...", initialdir=initialdir)
+        if(outpath == ""):
+            return
+        self.eid_path_text.set(outpath)
+        self.modal.lift()
+        self.entry_eid_path['fg'] = "#000000"
+
+    def begin_scan(self):
+        return
+        # TODO: Begin the scanner with these settings
 
