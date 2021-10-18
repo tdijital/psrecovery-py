@@ -6,7 +6,7 @@ import tkinter as tk
 import disklib
 from common.logger import Logger
 
-from analysis.analyzer import Scanner2
+from analysis.analyzer import Scanner, UFS2Linker
 from analysis.ufs import endianness, Endianness
 from gui.app import App
 
@@ -18,9 +18,9 @@ def main(path, keyfile=None, deep_scan=False):
     Logger.streams.append(logfile)
 
     with open(path, 'rb') as fp:
-        stream = disklib.FileDiskStream(path)
+        file_disk_stream = disklib.FileDiskStream(path)
         config = disklib.DiskConfig()
-        config.setStream(stream)
+        config.setStream(file_disk_stream)
         
         if keyfile:
             keys = open(keyfile, 'rb').read()
@@ -30,35 +30,39 @@ def main(path, keyfile=None, deep_scan=False):
 
         disk = disklib.DiskFormatFactory.detect(config)
 
-        disk_stream = disk.getDataProvider()
+        stream = disk.getDataProvider()
 
         ps3_magic1 = bytes.fromhex('0FACE0FF')
         ps3_magic2 = bytes.fromhex('DEADFACE')
-        disk_stream.seek(0x14)
-        magic1 = disk_stream.read(0x4)
-        disk_stream.seek(0x1C)
-        magic2 = disk_stream.read(0x4)
+        stream.seek(0x14)
+        magic1 = stream.read(0x4)
+        stream.seek(0x1C)
+        magic2 = stream.read(0x4)
 
         global endianness
 
+        scan_partition = ''
         if ps3_magic1 == magic1 or ps3_magic2 == magic2:
             endianness = Endianness.BIG
+            scan_partition = 'dev_hdd0'
             Logger.log("Scanning PS3 HDD img...")
         else:
             endianness = Endianness.LITTLE
+            scan_partition = 'user'
             Logger.log("Scanning PS4 HDD img...")
 
-        scanner = Scanner2(disk, 0x200)
+        scanner = Scanner(disk, scan_partition)
         
         load_path = os.path.normpath(f"{os.getcwd()}\\scans") + "\\" + os.path.basename(path).split(".")[0]
         load_path = load_path.lower()
 
-        inodes = scanner.scan(load_path,deep_scan)
+        scanner.scan(load_path,deep_scan)
+        linker = UFS2Linker(disk, scanner.scan_results)
 
 
         root = tk.Tk()
         root.title("PS Recovery Prototype")
-        app = App(root, inodes, disk, scanner._sblk)
+        app = App(root, linker.get_root_nodes(), disk, scanner._sblk)
         app.mainloop()
 
 

@@ -63,11 +63,11 @@ class SuperBlock():
             \nfsbtodb: {self.fsbtodb:X} \nbshift: {self.bshift:X}\nnindir: {self.nindir:X}")
 
 
-def ino_to_offset(sb, ino):
-    cyl_index = (ino // sb.ipg)
-    cyl_offset = (cyl_index * (sb.fpg * sb.fsize))
-    inode_table_offset = sb.iblkno * sb.fsize
-    inode_offset = (ino - (sb.ipg * cyl_index)) * 0x100
+def ino_to_offset(superblock, ino):
+    cyl_index = (ino // superblock.ipg)
+    cyl_offset = (cyl_index * (superblock.fpg * superblock.fsize))
+    inode_table_offset = superblock.iblkno * superblock.fsize
+    inode_offset = (ino - (superblock.ipg * cyl_index)) * 0x100
     return cyl_offset + inode_table_offset + inode_offset
 
 """
@@ -146,13 +146,9 @@ def get_inode_class():
         def get_offset(self):
             return self._offset
         def get_block_indexes(self, stream, super_block):
-            
-            #Logger.log( f"Retrieving block indexes of inode at offset: 0x{self.get_offset():X} ...\
-            #            \nInode Details -----------------------------------------------------\
-            #            \nblksize: {self.blksize} size: {self.size} blocks: {self.blocks}")
             max_bindex = stream.getLength() / super_block.fsize
 
-            def read_block_indexes(blocktable_index, indirection=0, stream=stream, super_block=super_block):
+            def read_block_indexes(blocktable_index, stream=stream, super_block=super_block):
                 sb:SuperBlock = super_block
                 if max_bindex < blocktable_index:
                     Logger.log(f"Warning block table index is out of bounds: {blocktable_index:X}")
@@ -171,7 +167,7 @@ def get_inode_class():
                         break
                     if block_index == 0:
                         break
-                    Logger.log(f"Read block [{blockcount}] index: {block_index:X} at offset 0x{block_table_offset + (blockcount*0x8):X}")
+                    # Logger.log(f"Read block [{blockcount}] index: {block_index:X} at offset 0x{block_table_offset + (blockcount*0x8):X}")
                     blocks_indexes.append(block_index)
                     blockcount += 1
                 return blocks_indexes
@@ -184,7 +180,7 @@ def get_inode_class():
                 if max_bindex < index:
                     Logger.log(f"Warning db index is out of bounds: {index:X}")
                     index = 0
-                Logger.log(f"read db[{count}] block index: {index:X} at offset 0x{self._offset + 0x70 + (count*0x8):X}")
+                # Logger.log(f"read db[{count}] block index: {index:X} at offset 0x{self._offset + 0x70 + (count*0x8):X}")
                 indexes.append(index)
                 count += 1
             
@@ -207,3 +203,8 @@ def get_inode_class():
             
             return indexes
     return Inode
+
+def inode_is_directory(inode):
+    #  We can also check the following:
+    #   - 0100000 is set for files (IFREG)
+    return inode.mode & 0x4000

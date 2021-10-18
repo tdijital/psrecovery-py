@@ -99,8 +99,8 @@ class App(tk.Frame):
         Logger.log("Processing directories...")
         self.process_directory(root_node, nodes)
         Logger.log(f"Fully Recovered: {self.recovered_files} files!")
-        Logger.log(f"Inodes: {self.recovered_inodes} inodes!")
-        Logger.log(f"Directs: {self.recovered_directs} directs!")
+        Logger.log(f"Orphaned Inodes: {self.recovered_inodes} inodes!")
+        Logger.log(f"Orphaned Directs: {self.recovered_directs} directs!")
         Logger.log("Sorting directories...")
         # self.sort_root_folders_to_top()
         # self.fs_tree.grid(sticky='nesw')
@@ -430,15 +430,24 @@ class App(tk.Frame):
                     icon = self.folder_direct_ref_ico
             # Name
             name = node.get_name()
-            if not node.get_direct() and not node.get_inode() and node.get_directory_offset():
-                if name == None:
-                    name = f"Folder{node.get_directory_offset():X}"
-            elif not node.get_direct() and node.get_inode():
-                # self.identify_file(node)
-                if node.get_type != NodeType.DIRECTORY:
-                    name = f"Inode{node.get_inode_offset():X}{node._filesignature.extension if node._filesignature is not None else ''}"
-                else:
-                    name = f"Folder{node.get_inode_offset():X}{node._filesignature.extension if node._filesignature is not None else ''}"
+            # if not node.get_direct() and not node.get_inode() and node.get_directory_offset():
+            #     if name == None:
+            #         name = f"Folder{node.get_directory_offset():X}"
+            # elif not node.get_direct() and node.get_inode():
+            #     if node.get_type != NodeType.DIRECTORY:
+            #         if node.get_inode_offset():
+            #             name = f"Inode{node.get_inode_offset():X}{node._filesignature.extension if node._filesignature is not None else ''}"
+            #         else:
+            #              name = f"InodeUnknown{node._filesignature.extension if node._filesignature is not None else ''}"
+            #     else:
+            #         if node.get_inode_offset():
+            #             name = f"Folder{node.get_inode_offset():X}{node._filesignature.extension if node._filesignature is not None else ''}"
+            #         else:
+            #             name = f"FolderUnknown{node._filesignature.extension if node._filesignature is not None else ''}"
+
+            if name == None:
+                name = "Unknown"
+
             # Tree Item
             item = self.fs_tree.insert(parent, tk.END, text=name,
                 values=(
@@ -446,9 +455,7 @@ class App(tk.Frame):
                 time.ctime(ctime) if ctime and ctime < 32536799999 else '',
                 time.ctime(atime) if atime and atime < 32536799999 else '',
                 time.ctime(mtime) if mtime and mtime < 32536799999 else '',
-                ),
-                image=icon,
-                tags = (str(node.get_inode_offset())))
+                ), image=icon)
             self.node_map[item] = node
             if node.get_type() == 1:
                 self.process_directory(item, node.get_children())
