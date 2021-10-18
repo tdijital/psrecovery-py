@@ -187,19 +187,19 @@ def get_inode_class():
             # Read indirect blocks
             if self.ib[0] > 0:
                 btable_index = self.ib[0]
-                indexes += read_block_indexes(btable_index, 1)
+                indexes += read_block_indexes(btable_index)
             if self.ib[1] > 0:
                 ib_table_index = self.ib[1]
-                btable = read_block_indexes(ib_table_index, 1)
+                btable = read_block_indexes(ib_table_index)
                 for btable_index in btable:
-                    indexes += read_block_indexes(btable_index, 2)
+                    indexes += read_block_indexes(btable_index)
             if self.ib[2] > 0:
                 ib_table_index = self.ib[2]
-                ib_table = read_block_indexes(ib_table_index, 1)
+                ib_table = read_block_indexes(ib_table_index)
                 for ib_ib_table_index in ib_table:
-                    btable = read_block_indexes(ib_ib_table_index, 2)
+                    btable = read_block_indexes(ib_ib_table_index)
                     for btable_index in btable:
-                        indexes += read_block_indexes(btable_index, 3)
+                        indexes += read_block_indexes(btable_index)
             
             return indexes
     return Inode
