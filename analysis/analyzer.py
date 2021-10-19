@@ -557,25 +557,11 @@ class UFS2Linker:
 
         self._link_nodes_with_inodes()
         self._link_nodes_with_directory_current_direct()
-        #self._link_nodes_with_directory_parent_direct()
         
 
     def _create_node(self, direct, inode, inode_offset=None):
         _inode_offset = inode_offset
         _node = None
-
-        if direct:
-            if direct.type == 0x4:
-                _node = Node(NodeType.DIRECTORY)
-            else:
-                _node = Node(NodeType.FILE)
-            #if direct.get_offset() in self._active_directs:
-            #    node.set_active(True)
-            _inode_offset = ino_to_offset(self._scan_results.superblock, direct.ino)
-            _node.set_direct(direct)
-            _node.set_direct_offset(direct.get_offset())
-            _node.set_inode_offset(_inode_offset)
-            _node.set_name(direct.get_name())
 
         if inode:
             _inode_offset = inode.get_offset()
@@ -593,6 +579,21 @@ class UFS2Linker:
             if _node.get_type() == NodeType.DIRECTORY:
                 _node.set_directory_offset(first_data_block_offset)
                 self._directory_node_map[first_data_block_offset] = _node
+        
+        if direct:
+            if not _node:
+                if direct.type == 0x4 or direct.get_name() == '___LOCK':
+                    _node = Node(NodeType.DIRECTORY)
+                else:
+                    _node = Node(NodeType.FILE)
+            #if direct.get_offset() in self._active_directs:
+            #    node.set_active(True)
+            _inode_offset = ino_to_offset(self._scan_results.superblock, direct.ino)
+            _node.set_direct(direct)
+            _node.set_direct_offset(direct.get_offset())
+            _node.set_inode_offset(_inode_offset)
+            _node.set_name(direct.get_name())
+        
 
         if inode is None and direct is None:
             _node = Node(NodeType.DIRECTORY)
@@ -610,10 +611,14 @@ class UFS2Linker:
                 self._inode_node_map.get(_inode_offset).append(_node)
             else:
                 self._inode_node_map[_inode_offset] = [_node]
-            
+
         return _node or None
 
+    #
+    # Step 1 : Creat all nodes
+    #
     def _create_nodes_from_directs_linked_to_inodes(self):
+        Logger.log("UFS2Linker [Step 1/2] |- Creating nodes from recovered directs that have their inodes also recovered")
         nodes = []
         for direct in self._scan_results.directs_list:
             name = direct.get_name()
@@ -627,6 +632,7 @@ class UFS2Linker:
         return nodes
 
     def _create_nodes_from_unclaimed_inodes(self):
+        Logger.log("UFS2Linker [Step 1/2] |- Creating nodes from inodes that have no direct")
         nodes = []
         for inode in self._scan_results.inode_map.values():
             if inode.get_offset() in self._claimed_inodes:
@@ -635,6 +641,7 @@ class UFS2Linker:
         return nodes
 
     def _create_nodes_from_unclaimed_directs(self):
+        Logger.log("UFS2Linker [Step 1/2] |- Creating nodes from directs that have no inode")
         nodes = []
         for direct in self._scan_results.directs_list:
             if direct.get_offset() in self._claimed_directs:
@@ -645,19 +652,29 @@ class UFS2Linker:
         return nodes
     
     def _create_nodes_from_parent_directs_missing_inode(self):
+        Logger.log("UFS2Linker [Step 1/2] |- Creating nodes from directories that have no nodes")
         nodes = []
         for directory in self._scan_results.directory_map.values():
-            parent_inode_offset = ino_to_offset(self._scan_results.superblock, directory.get_direct("..").ino)
-            if parent_inode_offset not in self._inode_node_map.keys():
-                node = self._create_node(None,None,parent_inode_offset)
-                nodes.append(node)
             current_inode_offset = ino_to_offset(self._scan_results.superblock, directory.get_direct(".").ino)
-            if current_inode_offset not in self._inode_node_map.keys():
-                node = self._create_node(None,None,current_inode_offset)
-                nodes.append(node)
+            if current_inode_offset in self._inode_node_map.keys():
+                possible_parent_nodes = self._inode_node_map[current_inode_offset]
+                directory_exists_in_possible_parents = False
+                for node in possible_parent_nodes:
+                    if node.get_type() == NodeType.DIRECTORY:
+                        directory_exists_in_possible_parents = True
+                        break
+                if directory_exists_in_possible_parents:
+                    continue
+            node = self._create_node(None, None, current_inode_offset)
+            node.set_directory_offset(directory.get_offset())
+            nodes.append(node)
         return nodes
     
+    #
+    # Step 2 : Link all nodes
+    #
     def _link_nodes_with_inodes(self):
+        Logger.log("UFS2Linker [Step 2/2] |- Link nodes that are linked via blocks in a directory inode")
         for node in self._nodes:
             node:Node
             if node.get_type() == NodeType.DIRECTORY:
@@ -679,6 +696,7 @@ class UFS2Linker:
                         self._claimed_directories[directory.get_offset()] = directory
     
     def _link_nodes_with_directory_current_direct(self):
+        Logger.log("UFS2Linker [Step 2/2] |- Link nodes in a directory to the directories parent")
         for directory in self._scan_results.directory_map.values():
             directory:Directory
             if directory.get_offset() in self._claimed_directories:
@@ -697,27 +715,6 @@ class UFS2Linker:
                     child_node:Node = self._direct_node_map.get(direct.get_offset())
                     node.add_child(child_node)
                     child_node.add_parent(node)
-
-    def _link_nodes_with_directory_parent_direct(self):
-        for directory in self._scan_results.directory_map.values():
-            directory:Directory
-            if directory.get_offset() in self._claimed_directories:
-                continue
-            parent_directory_direct = directory.get_direct("..")
-            parent_directory_inode_offset = ino_to_offset(self._scan_results.superblock, parent_directory_direct.ino)
-            nodes = self._inode_node_map.get(parent_directory_inode_offset)
-
-            current_directory_direct = directory.get_direct(".")
-            current_directory_inode_offset = ino_to_offset(self._scan_results.superblock, current_directory_direct.ino)
-            current_nodes = self._inode_node_map.get(current_directory_inode_offset)
-
-            if current_directory_inode_offset == parent_directory_inode_offset:
-                continue
-            
-            for node in nodes:
-                for current_node in current_nodes:
-                    node.add_child(current_node)
-                    current_node.add_parent(node)
 
     def get_root_nodes(self):
         root_nodes = []
