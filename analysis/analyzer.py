@@ -89,6 +89,11 @@ class Node:
         return self._directory_offset
     def set_inode(self, inode):
         self._inode = inode
+        self.set_inode_offset(inode.get_offset())
+        self.set_size(inode.size)
+        self.set_creation_time(inode.ctime)
+        self.set_last_access_time(inode.atime)
+        self.set_last_modified_time(inode.mtime)
     def get_inode(self):
         return self._inode
     def set_inode_offset(self, offset):
@@ -100,18 +105,10 @@ class Node:
     def get_children(self):
         return self._children
     def add_child(self, child):
-        for node in self._children:
-            if node.get_direct_offset() == child.get_direct_offset():
-                Logger.log(f"[!] [Matching Direct]  Skipping add child {child.get_name()} because it already exists in {self._name}")
-                return
         self._children.append(child)
     def get_parents(self):
         return self._parents
     def add_parent(self, parent):
-        for node in self.get_parents():
-            if node.get_direct_offset() == parent.get_direct_offset():
-                Logger.log(f"[!] [Matching Direct]  Skipping add parent {parent.get_name()} because {self._name} is already a child ")
-                return
         self._parents.append(parent)
     def __repr__(self):
         return self.get_name()
@@ -563,26 +560,9 @@ class UFS2Linker:
         _inode_offset = inode_offset
         _node = None
 
-        if inode:
-            _inode_offset = inode.get_offset()
-            first_data_block_offset = inode.db[0] * self._scan_results.superblock.fsize
-            if not _node:
-                if inode_is_directory(inode):
-                    _node = Node(NodeType.DIRECTORY)
-                else:
-                    _node = Node(NodeType.FILE)    
-            _node.set_inode(inode)
-            _node.set_size(inode.size)
-            _node.set_creation_time(inode.ctime)
-            _node.set_last_access_time(inode.atime)
-            _node.set_last_modified_time(inode.mtime)
-            if _node.get_type() == NodeType.DIRECTORY:
-                _node.set_directory_offset(first_data_block_offset)
-                self._directory_node_map[first_data_block_offset] = _node
-        
         if direct:
             if not _node:
-                if direct.type == 0x4 or direct.get_name() == '___LOCK':
+                if direct.type == 0x4 or direct.get_name() == '___LOCK' or '#' in direct.get_name():
                     _node = Node(NodeType.DIRECTORY)
                 else:
                     _node = Node(NodeType.FILE)
@@ -593,9 +573,24 @@ class UFS2Linker:
             _node.set_direct_offset(direct.get_offset())
             _node.set_inode_offset(_inode_offset)
             _node.set_name(direct.get_name())
+            if direct.get_offset() == None:
+                Logger.log("WTF?!")
         
-
-        if inode is None and direct is None:
+        if inode:
+            _inode_offset = inode.get_offset()
+            first_data_block_offset = inode.db[0] * self._scan_results.superblock.fsize
+            if not _node:
+                if inode_is_directory(inode):
+                    _node = Node(NodeType.DIRECTORY)
+                    _node.set_directory_offset(first_data_block_offset)
+                    self._directory_node_map[first_data_block_offset] = _node  
+                else:
+                    _node = Node(NodeType.FILE)
+            if _node.get_type() is not NodeType.DIRECTORY and inode_is_directory(inode):
+                Logger.log(f"WTF?! The node {_node.get_name()} is not a directory but the inode says it should be!")
+            _node.set_inode(inode)
+        
+        if inode is None and direct is None and _inode_offset is not None:
             _node = Node(NodeType.DIRECTORY)
             _node.set_inode_offset(_inode_offset)
 
@@ -708,6 +703,8 @@ class UFS2Linker:
             directs = directory.get_directs()
             for node in nodes:
                 node:Node
+                if node.get_type() == NodeType.FILE:
+                    continue
                 self._directory_node_map[directory_offset] = node
                 for direct in directs:
                     if direct.get_name() == "." or direct.get_name() == "..":

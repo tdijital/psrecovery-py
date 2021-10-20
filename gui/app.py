@@ -74,6 +74,7 @@ class App(tk.Frame):
         # Tab: File Carver
         tab_carver = ttk.Frame(tab_control)
 
+        # Tabs Header
         tab_control.add(tab_fs, text="File System")
         tab_control.add(tab_carver, text="File Carver")
         tab_control.pack(expand = 1, fill =BOTH)
@@ -102,9 +103,6 @@ class App(tk.Frame):
         Logger.log(f"Orphaned Inodes: {self.recovered_inodes} inodes!")
         Logger.log(f"Orphaned Directs: {self.recovered_directs} directs!")
         Logger.log("Sorting directories...")
-        # self.sort_root_folders_to_top()
-        # self.fs_tree.grid(sticky='nesw')
-        # self.fs_tree.pack(side='left', fill='both', expand=True)
 
         self.fs_tree.grid(row=0, column=0, sticky='nesw')
         ysb.grid(row=0, column=1, sticky='ns')
@@ -391,10 +389,6 @@ class App(tk.Frame):
             # Exclude meta data
             if node.get_name() == '.' or node.get_name() == '..':
                 continue
-            # Exclude directories at the root with no children
-            #if node.get_type() != NodeType.FILE and len(node.get_children()) <= 2 and str(parent) == "I001" and not node.get_active():
-            #    continue
-            # Data
             size = node.get_size()
             ctime = node.get_creation_time()
             atime = node.get_last_access_time()
@@ -430,21 +424,17 @@ class App(tk.Frame):
                     icon = self.folder_direct_ref_ico
             # Name
             name = node.get_name()
-            # if not node.get_direct() and not node.get_inode() and node.get_directory_offset():
-            #     if name == None:
-            #         name = f"Folder{node.get_directory_offset():X}"
-            # elif not node.get_direct() and node.get_inode():
-            #     if node.get_type != NodeType.DIRECTORY:
-            #         if node.get_inode_offset():
-            #             name = f"Inode{node.get_inode_offset():X}{node._filesignature.extension if node._filesignature is not None else ''}"
-            #         else:
-            #              name = f"InodeUnknown{node._filesignature.extension if node._filesignature is not None else ''}"
-            #     else:
-            #         if node.get_inode_offset():
-            #             name = f"Folder{node.get_inode_offset():X}{node._filesignature.extension if node._filesignature is not None else ''}"
-            #         else:
-            #             name = f"FolderUnknown{node._filesignature.extension if node._filesignature is not None else ''}"
-
+            if name == None:
+                if node.get_type() == NodeType.DIRECTORY:
+                    if node.get_inode_offset():
+                        name = f"Folder{node.get_inode_offset():X}"
+                    elif node.get_direct_offset():
+                        name = f"Folder{node.get_direct_offset():X}"
+                else:
+                    if node.get_inode_offset():
+                        name = f"File{node.get_inode_offset():X}"
+                    elif node.get_direct_offset():
+                        name = f"File{node.get_direct_offset():X}"
             if name == None:
                 name = "Unknown"
 
