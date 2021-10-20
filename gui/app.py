@@ -2,7 +2,8 @@ import math
 import os
 import time
 import tkinter as tk
-from tkinter.constants import BOTH, DISABLED, LEFT, NORMAL
+import tkinter
+from tkinter.constants import ANCHOR, BOTH, DISABLED, LEFT, NORMAL
 import tkinter.ttk as ttk
 from tkinter import Entry, Label, Menu, PhotoImage, Button, Radiobutton, Text, filedialog, simpledialog
 
@@ -18,6 +19,7 @@ class App(tk.Frame):
         self._super_block = super_block
         self.item_right_click_on = None
         self._search_text = ""
+        self._find_recoverable_only = False
         self.recovered_files = 0
         self.recovered_inodes = 0
         self.recovered_directs = 0
@@ -304,10 +306,14 @@ class App(tk.Frame):
         for i in range(start_index+offset, end_index, increment):
             text = self.fs_tree.item(self._nodes[i])['text']
             if query in text.lower():
+                if self._find_recoverable_only and not self.node_map[self._nodes[i]].get_inode():
+                    continue
                 return self._nodes[i]
         for i in range(end_index, start_index, increment):
             text = self.fs_tree.item(self._nodes[i])['text']
             if query in text.lower():
+                if self._find_recoverable_only and not self.node_map[self._nodes[i]].get_inode():
+                    continue
                 return self._nodes[i]
         return None
     
@@ -321,11 +327,10 @@ class App(tk.Frame):
                 self.fs_tree.selection_set(found)
 
     def find(self, event):
-        Logger.log("Find")
-        query = simpledialog.askstring("Find File", "Enter file name:", initialvalue=self._search_text,
-            parent=self)
-        if query:
-            self._search_text = query.lower()
+        search = FindDialog(self._master, self._search_text)
+        if search.search_query:
+            self._search_text = search.search_query.lower()
+            self._find_recoverable_only = search.find_recoverable_only.get()
             focused = self.fs_tree.focus()
             found = self.find_text(self._search_text, focused)
             if found:
@@ -488,11 +493,11 @@ class OpenHDDImageModal(tk.Frame):
 
     def open_filedialog_image(self):
         outpath = filedialog.askopenfilename(title="Open a PS3 or PS4 img...", filetypes=[('HDD Image', '*.img')], initialdir='/')
+        self.modal.lift()
         if(outpath == ""):
             return
         self.img_path_text.set(outpath)
         self.scan_btn['state'] = NORMAL
-        self.modal.lift()
         self.entry_image_path['fg'] = "#000000"
     
     def open_filedialog_eid(self):
@@ -500,13 +505,36 @@ class OpenHDDImageModal(tk.Frame):
         if(self.img_path_text.get() != self.default_text_browse_img) :
             initialdir = os.path.dirname(self.img_path_text.get())
         outpath = filedialog.askopenfilename(title="Open EID key...", initialdir=initialdir)
+        self.modal.lift()
         if(outpath == ""):
             return
         self.eid_path_text.set(outpath)
-        self.modal.lift()
         self.entry_eid_path['fg'] = "#000000"
 
     def begin_scan(self):
         return
         # TODO: Begin the scanner with these settings
 
+class FindDialog(tk.simpledialog.Dialog):
+    def __init__(self, root, initial_value):
+        self.search_query = None
+        self.find_recoverable_only = tk.BooleanVar()
+        super().__init__(root, "Search")
+
+    def body(self, frame):
+        self.search_box = tk.Entry(frame, width=40)
+        self.search_box.pack(expand=1, fill=tk.X)
+
+        self.chk_btn_active_only = tk.Checkbutton(frame, text='Ignore Unrecoverable.',variable=self.find_recoverable_only, onvalue=True, offvalue=False)
+        self.chk_btn_active_only.pack(anchor='w')
+
+        return frame
+
+    def search_pressed(self):
+        self.search_query = self.search_box.get()
+        self.destroy()
+
+    def buttonbox(self):
+        self.find_button = tk.Button(self, text='Find', width=10, command=self.search_pressed)
+        self.find_button.pack(side=tkinter.RIGHT, padx=5, pady=5)
+        self.bind("<Return>", lambda event: self.search_pressed())
