@@ -110,7 +110,7 @@ class App(tk.Frame):
         ysb.grid(row=0, column=1, sticky='ns')
         xsb.grid(row=1, column=0, sticky='ew')
         # self.grid()
-        master.bind('<Control-f>', self.find)
+        master.bind('<Control-f>', self.open_find_dialog)
         master.bind('<F3>', self.find_next)
         master.bind('<Shift-F3>', lambda event:self.find_next(event, True)) # Previous
         self._nodes = self.get_all_nodes()
@@ -205,7 +205,7 @@ class App(tk.Frame):
             fullpath = os.path.join(dirname, path)
             if not os.path.exists(fullpath):
                 os.makedirs(fullpath)
-                self.set_ts(fullpath, node)
+                self.set_file_ts(fullpath, node)
             
             # Read blocks
             if node.get_type() == NodeType.FILE:
@@ -245,14 +245,14 @@ class App(tk.Frame):
                 with open(file_path, 'wb') as f:
                     f.write(file_bytes)
                 
-                self.set_ts(file_path, node)
+                self.set_file_ts(file_path, node)
             
         
         Logger.log("Recovery Completed!")
         Logger.remove_stream(logfile)
         
 
-    def set_ts(self, path, node):
+    def set_file_ts(self, path, node):
         if node.get_inode() is None:
             return
         atime = node.get_last_access_time()
@@ -277,22 +277,16 @@ class App(tk.Frame):
                 nodes.extend(self.get_all_nodes(child))
         return nodes
 
-    def sort_column(self, column, reverse):
-        items = self.fs_tree.get_children('I001')
-        l = [(self.fs_tree.set(k, column), k) for k in items]
-        l.sort(reverse=reverse)
+    # def sort_column(self, column, reverse):
+    #     items = self.fs_tree.get_children('I001')
+    #     l = [(self.fs_tree.set(k, column), k) for k in items]
+    #     l.sort(reverse=reverse)
 
-        for index, (val, k) in enumerate(l):
-            self.fs_tree.move(k, '', index)
+    #     for index, (val, k) in enumerate(l):
+    #         self.fs_tree.move(k, '', index)
         
-        self.fs_tree.heading(column, command=lambda: \
-            self.sort_column(column, not reverse))
-
-    def sort_root_folders_to_top(self):
-        items = self.fs_tree.get_children('I001')
-        for item in items:
-            if self.node_map[item].get_type() == NodeType.DIRECTORY:
-                self.fs_tree.move(item,'I001',0)
+    #     self.fs_tree.heading(column, command=lambda: \
+    #         self.sort_column(column, not reverse))
 
     def find_text(self, query, start=None, reversed=False):
         start_index = 0
@@ -326,7 +320,7 @@ class App(tk.Frame):
                 self.fs_tree.focus(found)
                 self.fs_tree.selection_set(found)
 
-    def find(self, event):
+    def open_find_dialog(self, event):
         search = FindDialog(self._master, self._search_text)
         if search.search_query:
             self._search_text = search.search_query.lower()
@@ -337,56 +331,6 @@ class App(tk.Frame):
                 self.fs_tree.see(found)
                 self.fs_tree.focus(found)
                 self.fs_tree.selection_set(found)
-
-    def check_if_inode_indexes_valid(self, node):
-        def check_if_indexes_valid(indexes):
-            for index in indexes:
-                if index > self.max_block_index:
-                    return False
-            return True
-        if node.get_type() == NodeType.FILE:
-                # If an inode exists read the inodes blocks
-                if node.get_inode() is not None:
-                    Logger.log(f"Checking if inode is valid at offset: 0x{node.get_inode_offset():X}")
-                    # Check direct blocks
-                    for block in node.get_inode().db:
-                        if block > self.max_block_index:
-                            return False
-                    
-                    # Check indirect blocks
-                    if node.get_inode().ib[0] > 0:
-                        btable_index = node.get_inode().ib[0]
-                        if btable_index > self.max_block_index:
-                            return False
-                        btable = self.read_block_indexes(btable_index)
-                        if not check_if_indexes_valid(btable):
-                            return False
-           
-                    if node.get_inode().ib[1] > 0:
-                        ib_table_index = node.get_inode().ib[1]
-                        if ib_table_index > self.max_block_index:
-                            return False
-                        ib_table = self.read_block_indexes(ib_table_index)
-                        if not check_if_indexes_valid(ib_table):
-                            return False
-                        for btable_index in ib_table:
-                            if not check_if_indexes_valid(self.read_block_indexes(btable_index)):
-                                return False
-                    
-                    if node.get_inode().ib[2] > 0:
-                        ib_ib_table_index = node.get_inode().ib[2]
-                        if ib_ib_table_index > self.max_block_index:
-                            return False
-                        ib_ib_table = self.read_block_indexes(ib_ib_table_index)
-                        if not check_if_indexes_valid(ib_ib_table):
-                            return False
-                        for ib_table in ib_ib_table:
-                            if not check_if_indexes_valid(ib_table):
-                                return False
-                            for btable_index in ib_table:
-                                if not check_if_indexes_valid(self.read_block_indexes(btable_index)):
-                                    return False
-        return True
 
     def process_directory(self, parent, nodes):
         for node in nodes:
@@ -437,9 +381,9 @@ class App(tk.Frame):
                         name = f"Folder{node.get_direct_offset():X}"
                 else:
                     if node.get_inode_offset():
-                        name = f"File{node.get_inode_offset():X}"
+                        name = f"File{node.get_inode_offset():X}{node.get_file_ext() or ''}"
                     elif node.get_direct_offset():
-                        name = f"File{node.get_direct_offset():X}"
+                        name = f"File{node.get_direct_offset():X}{node.get_file_ext() or ''}"
             if name == None:
                 name = "Unknown"
 
@@ -524,6 +468,7 @@ class FindDialog(tk.simpledialog.Dialog):
     def body(self, frame):
         self.search_box = tk.Entry(frame, width=40)
         self.search_box.pack(expand=1, fill=tk.X)
+        self.search_box.focus_set()
 
         self.chk_btn_active_only = tk.Checkbutton(frame, text='Ignore Unrecoverable.',variable=self.find_recoverable_only, onvalue=True, offvalue=False)
         self.chk_btn_active_only.pack(anchor='w')
