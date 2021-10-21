@@ -230,7 +230,7 @@ class Scanner:
 
         if os.path.exists(loadpath + '\\inodes.txt') and os.path.exists(loadpath + '\\directories.txt'):
             # Load offsets from previous results that have been stored in the above two txt files
-            self._load_load_from_files(loadpath)
+            self._load_from_files(loadpath)
             loaded_from_file = True
         else:
             # There are no saved results, let's start a new scan
@@ -256,6 +256,7 @@ class Scanner:
         drive_length = self._stream.getLength()
         scan_interval = 0x100 # This will take forever but should never miss an inode or direct...
         for offset in range(0, drive_length, scan_interval):
+            # Check if direct
             self._stream.seek(offset)
             direct_check = self._stream.read(0x18)
             test1 = direct_check[6] == 0x4 and direct_check[7] == 0x1 and direct_check[8:9] == b'.'
@@ -376,7 +377,7 @@ class Scanner:
                 self.scan_results.inode_map[inode_offset] = inode
 
 
-    def _load_load_from_files(self, loadpath):
+    def _load_from_files(self, loadpath):
         # Inodes.txt has offsets to all inodes
         # Directs.txt has offsets to all directs
         # We just load each offset, then go to the offset in the disk and read the structures
