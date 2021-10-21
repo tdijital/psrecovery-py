@@ -6,12 +6,13 @@ import tkinter as tk
 import disklib
 from common.logger import Logger
 
-from analysis.analyzer import Scanner, UFS2Linker
+from analysis.analyzer import Node, NodeType, Scanner, UFS2Linker
 from analysis.ufs import endianness, Endianness
 from gui.app import App
+from analysis.carver import InodeIdentifier, all_filesigs
 
 
-def main(path, keyfile=None, deep_scan=False):
+def main(path, keyfile=None, is_deep_scan=False):
     
     Logger.streams.append(sys.stdout)
     logfile = open('log.txt','w', encoding='utf8')
@@ -56,13 +57,32 @@ def main(path, keyfile=None, deep_scan=False):
         load_path = os.path.normpath(f"{os.getcwd()}\\scans") + "\\" + os.path.basename(path).split(".")[0]
         load_path = load_path.lower()
 
-        scanner.scan(load_path,deep_scan)
-        linker = UFS2Linker(disk, scanner.scan_results)
+        # Find deleted inodes and directs
+        scanner.scan(load_path, is_deep_scan)
 
+        # Creates nodes and makes associations between inodes and directs
+        linker = UFS2Linker(disk, scanner.scan_results)
+        
+        nodes = linker.get_root_nodes()
+
+        # Identify file types
+        Logger.log("Identifying unknown files filetypes...")
+        inode_ident = InodeIdentifier(disk, scan_partition)
+        identified_count = 0
+        for node in nodes:
+            node:Node
+            if not node.get_inode() or node.get_type() == NodeType.DIRECTORY or node.get_direct():
+                continue
+            file_sig = inode_ident.identify_unk_inode_filetype(node.get_inode())
+            if file_sig:
+                identified_count += 1
+                node.set_file_ext(file_sig.extension)
+
+        Logger.log(f"Identified {identified_count} unknown filetypes!")
 
         root = tk.Tk()
         root.title("PS Recovery Prototype")
-        app = App(root, linker.get_root_nodes(), disk, scanner._sblk)
+        app = App(root, nodes, disk, scanner._sblk)
         app.mainloop()
 
 

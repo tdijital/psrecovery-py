@@ -1,4 +1,7 @@
 import struct
+from common.logger import Logger
+from .ufs import Endianness, SuperBlock, endianness
+
 
 class FileSignature:
     def __init__(self, stream, offset):
@@ -53,6 +56,9 @@ class FileSignature:
     def test(self):
         raise NotImplementedError("FileCarver tester not implemented!")
 
+    def parse(self):
+        raise NotImplementedError("FileCarver parser not implemented!")
+
 
 class SelfSignature(FileSignature):
     def initialization(self):
@@ -88,15 +94,6 @@ class SFOSignature(FileSignature):
     def test(self):
         magic = self.stream.read(4)
         return magic == b"\0PSF"
-
-
-#class RIFFSignature(FileSignature):
-#    def initialization(self):
-#        self.extension='.rif' # this isn't right
-#
-#    def test(self):
-#        magic = self.read(4)
-#        return magic == b"RIFF"
 
 
 class TRPSignature(FileSignature):
@@ -194,3 +191,42 @@ class UnrealTOCSignature(FileSignature):
 
 
 all_filesigs = [a_filesig for a_filesig in FileSignature.__subclasses__()]
+
+class FileCarver():
+    def __init__(self, disk, partition_name):
+        partition = disk.getPartitionByName(partition_name)
+        self._stream = partition.getDataProvider()
+        self.identified_file_sigs = []
+    
+    def scan(self, stream, start=0, end=0, interval=0x800):
+        if end == 0:
+            self.stream.seek(0, 2)
+            end = self.stream.tell()
+            self.stream.seek(0, 0)
+
+        for offset in range(start, end, interval):
+            for carver in self.carvers:
+                tester = carver(self.stream, offset)
+                self.stream.seek(offset)
+                if tester.test():
+                    self.stream.seek(offset)
+                    Logger.log("Parsing {}...".format(tester.__class__.__name__)),
+                    tester.parse()
+                    self.identified_file_sigs.append(tester)
+                    Logger.log(str(tester))
+
+class InodeIdentifier():
+    def __init__(self, disk, partition_name):
+        partition = disk.getPartitionByName(partition_name)
+        self._stream = partition.getDataProvider()
+
+        self._superblock = SuperBlock(self._stream)
+
+    def identify_unk_inode_filetype(self, inode):
+        for file_sig in all_filesigs:
+            # Pass the inodes db[0] to the file identifier
+            offset = inode.db[0] * self._superblock.fsize
+            self._stream.seek(offset)
+            tester = file_sig(self._stream, offset)
+            if tester.test():
+                return tester

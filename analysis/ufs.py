@@ -57,6 +57,7 @@ class SuperBlock():
         stream.seek(0x10000 + 0xBC)
         self.fpg = int.from_bytes(stream.read(4), byteorder=endianness)
 
+    def log_info(self):
         Logger.log(\
             f"ipg: {self.ipg:X}\nfpg: {self.fpg:X}\niblkno: {self.iblkno:X}\
             \ninopb: {self.inopb:X} \nfsize: {self.fsize:X} \nbsize: {self.bsize:X}\

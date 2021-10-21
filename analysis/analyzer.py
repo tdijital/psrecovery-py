@@ -46,7 +46,7 @@ class Node:
         self._children = []
         self._parents = []
         self._type = typ
-        self._filesignature = None
+        self._file_ext = None
         self._active = False
 
     def set_active(self, active):
@@ -110,6 +110,10 @@ class Node:
         return self._parents
     def add_parent(self, parent):
         self._parents.append(parent)
+    def set_file_ext(self, ext):
+        self._file_ext = ext
+    def get_file_ext(self):
+        return self._file_ext
     def __repr__(self):
         return self.get_name()
 
