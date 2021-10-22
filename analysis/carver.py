@@ -2,6 +2,8 @@ import struct
 from common.logger import Logger
 from .ufs import Endianness, SuperBlock, endianness
 
+import disklib
+
 
 class FileSignature:
     def __init__(self, stream, offset):
@@ -217,8 +219,8 @@ class FileCarver():
 
 class InodeIdentifier():
     def __init__(self, disk, partition_name):
-        partition = disk.getPartitionByName(partition_name)
-        self._stream = partition.getDataProvider()
+        self._partition = disk.getPartitionByName(partition_name)
+        self._stream = self._partition.getDataProvider()
 
         self._superblock = SuperBlock(self._stream)
 

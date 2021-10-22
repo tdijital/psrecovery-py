@@ -5,7 +5,8 @@ import tkinter as tk
 from tkinter import PhotoImage, Label
 
 from common.logger import Logger
-from gui.app import  App
+from gui.app import App
+
 
 def main(path=None, keyfile=None, is_deep_scan=False):
     

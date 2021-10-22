@@ -160,13 +160,12 @@ class Scanner:
         self._initialize(disk, partition_name)
 
     def _initialize(self, disk, partition_name):
-
         partition = disk.getPartitionByName(partition_name)
+
         self._stream = partition.getDataProvider()
-        Logger.log(f"Disk Size: {self._stream.getLength()} bytes")
 
         self._sblk = SuperBlock(self._stream)
-
+        
         vfs = partition.getVfs()
         vfs.mount()
         if not vfs.isMounted():
@@ -256,7 +255,6 @@ class Scanner:
         drive_length = self._stream.getLength()
         scan_interval = 0x100 # This will take forever but should never miss an inode or direct...
         for offset in range(0, drive_length, scan_interval):
-            # Check if direct
             self._stream.seek(offset)
             direct_check = self._stream.read(0x18)
             test1 = direct_check[6] == 0x4 and direct_check[7] == 0x1 and direct_check[8:9] == b'.'

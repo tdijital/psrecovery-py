@@ -5,16 +5,21 @@ import tkinter as tk
 import tkinter
 from tkinter.constants import ANCHOR, BOTH, DISABLED, LEFT, NORMAL
 import tkinter.ttk as ttk
-from tkinter import Entry, Label, Menu, PhotoImage, Button, Radiobutton, Text, filedialog, mainloop, simpledialog
+from tkinter import Entry, Label, Menu, PhotoImage, Button, Radiobutton, filedialog, simpledialog
 
 from analysis.analyzer import Node, NodeType, Scanner, UFS2Linker
-from analysis.carver import all_filesigs
+from analysis.carver import InodeIdentifier
 from analysis.ufs import Endianness, endianness
 from common.logger import Logger
 from common.event import Event
-from analysis.carver import InodeIdentifier, all_filesigs
 
 import disklib
+
+
+class DiskType():
+    PS3 = 0
+    PS4 = 1
+
 
 class App(tk.Frame):
     def __init__(self, master, path = None, key=None, deep_scan=None):
@@ -23,8 +28,14 @@ class App(tk.Frame):
 
         self._master = master
         self._recovered_file_browser = None
-        self._disk = None
         self._splash = None
+        self._tab_control = ttk.Notebook(self._master)
+
+        self._current_disk = None
+        self._current_diskpath = ''
+        self._current_keypath = ''
+        self._current_partition_name = ''
+        self._deep_scan = deep_scan
 
         # Menubar
         menubar = Menu(self._master)
@@ -35,7 +46,9 @@ class App(tk.Frame):
 
         file_menu.add_command(label="Open HDD img",command=self.display_open_image_modal)
 
-        self._master.after(100, self.scan_new_hdd, path, key, deep_scan)
+        if path:
+            self._master.after(100, self.begin_disk_scan, path, key, deep_scan)
+
         self.show_splash()
 
     def show_splash(self):
@@ -45,12 +58,27 @@ class App(tk.Frame):
         Label(inner_frame, image=splash_image, background='black').pack(fill="both", expand=True)
         self._master.mainloop()
 
-    def scan_new_hdd(self, path, keyfile=None, is_deep_scan=False):
+    def begin_disk_scan(self, path, keyfile=None, is_deep_scan=False):
+        with open(path):
+            # Open the disk
+            self._current_disk = self._open_disk(path, keyfile, is_deep_scan)
 
-        # Open img
-        file_disk_stream = disklib.FileDiskStream(path)
+            # Scan the disks partition
+            scan_results = self.scan_partition(self._current_disk, self._current_partition_name)
+
+            # Create nodes from the scans results
+            nodes = self.create_nodes_from_scan_results(self._current_disk, scan_results)
+
+            # Attempt to identify unknown nodes with inodes
+            nodes = self.identify_unknown_node_filetypes(self._current_disk, self._current_partition_name, nodes)
+
+            # Show results
+            self.display_scan_results_tab(nodes)
+
+    def _open_disk(self, path, keyfile=None, is_deep_scan=False):
+        disk = disklib.FileDiskStream(path)
         config = disklib.DiskConfig()
-        config.setStream(file_disk_stream)
+        config.setStream(disk)
         
         # Open eid keyfile
         if keyfile:
@@ -58,10 +86,20 @@ class App(tk.Frame):
             config.setKeys(keys)
         else:
             Logger.log("\nDecrypted drive support is broken currently... \nOpen an encrypted drive with a keyfile")
+        
+        disk = disklib.DiskFormatFactory.detect(config)
 
-        self._disk = disklib.DiskFormatFactory.detect(config)
+        self._current_diskpath = path
+        self._current_keypath = keyfile
 
-        stream = self._disk.getDataProvider()
+        disktype = self._get_disktype(disk)
+        self.set_disktype(disktype)
+        
+        return disk
+
+    def _get_disktype(self, disk):
+        
+        stream = disk.getDataProvider()
 
         ps3_magic1 = bytes.fromhex('0FACE0FF')
         ps3_magic2 = bytes.fromhex('DEADFACE')
@@ -72,20 +110,34 @@ class App(tk.Frame):
 
         global endianness
 
-        scan_partition = ''
-        if ps3_magic1 == magic1 or ps3_magic2 == magic2:
-            endianness = Endianness.BIG
-            scan_partition = 'dev_hdd0'
-            Logger.log("Scanning PS3 HDD img...")
-        else:
-            endianness = Endianness.LITTLE
-            scan_partition = 'user'
-            Logger.log("Scanning PS4 HDD img...")
+        disktype = None
 
-        scanner = Scanner(self._disk, scan_partition)
+        if ps3_magic1 == magic1 or ps3_magic2 == magic2:
+            Logger.log("Detected PS3 HDD img...")
+            disktype = DiskType.PS3
+        else:
+            Logger.log("Detected PS4 HDD img...")
+            disktype = DiskType.PS4
+
+        return disktype
+
+    def set_disktype(self, disktype):
+        global endianness
+        if disktype == DiskType.PS3:
+            endianness = Endianness.BIG
+            self._current_partition_name = 'dev_hdd0'
+            Logger.log("Set disk type to PS3: Partition dev_hdd0")
+        if disktype == DiskType.PS4:
+            endianness = Endianness.LITTLE
+            self._current_partition_name = 'user'
+            Logger.log("Set disk type to PS4: Partition user")
+
+    def scan_partition(self, disk, partition_name):
+        
+        scanner = Scanner(disk, partition_name)
         scan_logfile = None
         
-        load_path = os.path.normpath(f"{os.getcwd()}\\scans") + "\\" + os.path.basename(path).split(".")[0]
+        load_path = os.path.normpath(f"{os.getcwd()}\\scans") + "\\" + os.path.basename(self._current_diskpath).split(".")[0]
         load_path = load_path.lower()
 
         # If this scan hasn't completed before write a log
@@ -94,23 +146,23 @@ class App(tk.Frame):
             Logger.streams.append(scan_logfile)
 
         # Find deleted inodes and directs
-        scanner.scan(load_path, is_deep_scan)
+        scanner.scan(load_path, self._deep_scan)
 
         # Stop logging for the scan
         if scan_logfile:
             Logger.remove_stream(scan_logfile)
+        
+        return scanner.scan_results
 
-        self.open_scan_results(self._disk, scanner.scan_results)
-
-    def open_scan_results(self, disk, scan_results):
+    def create_nodes_from_scan_results(self, disk, scan_results):
         # Creates nodes and makes associations between inodes and directs
         linker = UFS2Linker(disk, scan_results)
-        
         nodes = linker.get_root_nodes()
+        return nodes
 
-        # Identify file types
+    def identify_unknown_node_filetypes(self, disk, partition_name, nodes):
         Logger.log("Identifying unknown files filetypes...")
-        inode_ident = InodeIdentifier(disk, scan_results.partition_name)
+        inode_ident = InodeIdentifier(disk, partition_name)
         identified_count = 0
         for node in nodes:
             node:Node
@@ -122,22 +174,30 @@ class App(tk.Frame):
                 node.set_file_ext(file_sig.extension)
 
         Logger.log(f"Identified {identified_count} unknown filetypes!")
-        
+        return nodes
+
+    def display_scan_results_tab(self, nodes):
         if self._splash:
             self._splash.pack_forget()
             self._splash.grid_forget()
             self._splash.destroy()
             self._splash = None
-
+        
         if self._recovered_file_browser:
             self._recovered_file_browser.load_nodes(nodes)
         else:
-            self._recovered_file_browser = RecoveredFilesBrowser(self._master, nodes)
+            self._master.geometry("1440x960")
 
+            # Create frame for viewing the scan results
+            self._recovered_file_browser = RecoveredFilesBrowser(self._tab_control, nodes)
+            
+            # Put the tab for the frame in the _tab_control
+            self._tab_control.add(self._recovered_file_browser, text="File System")
+            self._tab_control.pack(expand = 1, fill =BOTH)
 
     def display_open_image_modal(self):
         open_image_modal = OpenHDDImageModal()
-        open_image_modal.on_scan_initiated += self.scan_new_hdd
+        open_image_modal.on_scan_initiated += self.begin_disk_scan
 
 
 
@@ -150,8 +210,8 @@ class OpenHDDImageModal(tk.Frame):
         self.img_path_string.set(self._default_text_browse_img)
         self.eid_path_string = tk.StringVar()
         self.eid_path_string.set(self._default_text_browse_eid)
-        self.deep_scan = tk.IntVar()
-        self.deep_scan.set(1)
+        self.deep_scan = tk.BooleanVar()
+        self.deep_scan.set(False)
         self.on_scan_initiated = Event()
         
         # GUI
@@ -164,8 +224,8 @@ class OpenHDDImageModal(tk.Frame):
         self.entry_eid_path = Entry(self.modal, textvariable=self.eid_path_string, fg="#AAAAAA")
         self.entry_eid_path.place(x=10,y=40,width=390,height=28)
         eid_browse_btn = Button(self.modal, text="Browse", command=self.open_filedialog_eid).place(x=400,y=40)
-        fast_scan = Radiobutton(self.modal, text="Fast Scan*", variable=self.deep_scan, value=1).place(x=10,y=70)
-        deep_scan = Radiobutton(self.modal, text="Deep Scan", variable=self.deep_scan, value=2).place(x=100,y=70)
+        fast_scan = Radiobutton(self.modal, text="Fast Scan*", variable=self.deep_scan, value=False).place(x=10,y=70)
+        deep_scan = Radiobutton(self.modal, text="Deep Scan", variable=self.deep_scan, value=True).place(x=100,y=70)
         help_label = Label(self.modal, text="*Fast scan is much faster and more reliable.", font=("Arial", 8), fg="#AAAAAA", justify=LEFT, anchor="w").place(x=10,y=90,width=450,height=20)
         self.scan_btn = Button(self.modal, text="Scan", command=self.begin_scan, state=DISABLED)
         self.scan_btn.place(x=400,y=120)
@@ -238,18 +298,11 @@ class RecoveredFilesBrowser(tk.Frame):
         self.recovered_directs = 0
         self.node_map = {}
 
-        root.geometry("1440x960")
-
-        tab_control = ttk.Notebook(root)
-
-        # Tab: File System
-        tab_fs = ttk.Frame(tab_control)
-
-        tab_fs.pack(fill=BOTH, expand=True)
+        self.pack(fill=BOTH, expand=True)
         tree_columns = ('filesize', 'cdate', 'mdate', 'adate')
-        self.fs_tree = ttk.Treeview(tab_fs, columns=tree_columns)
-        ysb = ttk.Scrollbar(tab_fs, orient='vertical', command=self.fs_tree.yview)
-        xsb = ttk.Scrollbar(tab_fs, orient='horizontal', command=self.fs_tree.xview)
+        self.fs_tree = ttk.Treeview(self, columns=tree_columns)
+        ysb = ttk.Scrollbar(self, orient='vertical', command=self.fs_tree.yview)
+        xsb = ttk.Scrollbar(self, orient='horizontal', command=self.fs_tree.xview)
         self.fs_tree.configure(yscroll=ysb.set, xscroll=xsb.set)
         self.fs_tree.heading('#0', text='Contents', anchor='w')
         self.fs_tree.heading('filesize', text='File Size', anchor="w") #, command=lambda: self.sort_column(2, False))
@@ -257,16 +310,8 @@ class RecoveredFilesBrowser(tk.Frame):
         self.fs_tree.heading('mdate', text='Date Modified', anchor="w")
         self.fs_tree.heading('adate', text='Date Accessed', anchor="w")
 
-        tab_fs.grid_rowconfigure(0, weight=1)
-        tab_fs.grid_columnconfigure(0, weight=1)
-
-        # Tab: File Carver
-        tab_carver = ttk.Frame(tab_control)
-
-        # Tabs Header
-        tab_control.add(tab_fs, text="File System")
-        tab_control.add(tab_carver, text="File Carver")
-        tab_control.pack(expand = 1, fill =BOTH)
+        self.grid_rowconfigure(0, weight=1)
+        self.grid_columnconfigure(0, weight=1)
 
         self.folder_ico = PhotoImage(file='assets/icon-folder.gif')
         self.folder_direct_ico = PhotoImage(file='assets/icon-folder-direct.gif')
@@ -387,8 +432,6 @@ class RecoveredFilesBrowser(tk.Frame):
     def open_context_menu(self, event):
         item = self.fs_tree.identify('row', event.x, event.y)
         self.item_right_click_on = item
-        #self.fs_tree.selection_set(item)
-        #self.fs_tree.focus(item)
         self.context_menu.tk_popup( event.x_root + 60, event.y_root + 10, 0)
 
     def display_file_info(self):
