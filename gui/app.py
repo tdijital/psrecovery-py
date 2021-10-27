@@ -195,7 +195,7 @@ class App(tk.Frame):
             self._master.geometry("1440x960")
 
             # Create frame for viewing the scan results
-            self._recovered_file_browser = RecoveredFilesBrowser(self._tab_control, stream, nodes)
+            self._recovered_file_browser = RecoveredFilesBrowser(self._master, stream, nodes)
             
             # Put the tab for the frame in the _tab_control
             self._tab_control.add(self._recovered_file_browser, text="File System")
@@ -296,6 +296,7 @@ class FindDialog(tk.simpledialog.Dialog):
 class RecoveredFilesBrowser(tk.Frame):
     def __init__(self, root, stream, nodes):
         super(RecoveredFilesBrowser, self).__init__()
+        self._root = root
         self._stream = stream
         self.item_right_click_on = None
         self._search_text = ""
@@ -545,7 +546,7 @@ class RecoveredFilesBrowser(tk.Frame):
                 self.fs_tree.selection_set(found)
 
     def open_find_dialog(self, event):
-        search = FindDialog(self._master, self._search_text)
+        search = FindDialog(self._root, self._search_text)
         if search.search_query:
             self._search_text = search.search_query.lower()
             self._find_recoverable_only = search.find_recoverable_only.get()
