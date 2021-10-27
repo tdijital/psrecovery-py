@@ -14,12 +14,14 @@ from common.logger import Logger
 from common.event import Event
 
 import disklib
+from gui.filewriter import FileWriter
 
 
 class DiskType():
     PS3 = 0
     PS4 = 1
 
+_file_disk_stream = None
 
 class App(tk.Frame):
     def __init__(self, master, path = None, key=None, deep_scan=None):
@@ -44,7 +46,7 @@ class App(tk.Frame):
         file_menu = Menu(menubar, tearoff=0)
         menubar.add_cascade(label="File", menu=file_menu)
 
-        file_menu.add_command(label="Open HDD img",command=self.display_open_image_modal)
+        file_menu.add_command(label="Open HDD img",command=self.display_open_hdd_img_modal)
 
         if path:
             self._master.after(100, self.begin_disk_scan, path, key, deep_scan)
@@ -69,16 +71,21 @@ class App(tk.Frame):
             # Create nodes from the scans results
             nodes = self.create_nodes_from_scan_results(self._current_disk, scan_results)
 
+            # Create Stream
+            partition = self._current_disk.getPartitionByName(self._current_partition_name)
+            stream = partition.getDataProvider()
+
             # Attempt to identify unknown nodes with inodes
-            nodes = self.identify_unknown_node_filetypes(self._current_disk, self._current_partition_name, nodes)
+            nodes = self.identify_unknown_node_filetypes(stream, nodes)
 
             # Show results
-            self.display_scan_results_tab(nodes)
+            self.display_scan_results_tab(stream, nodes)
 
     def _open_disk(self, path, keyfile=None, is_deep_scan=False):
-        disk = disklib.FileDiskStream(path)
+        global _file_disk_stream
+        _file_disk_stream = disklib.FileDiskStream(path)
         config = disklib.DiskConfig()
-        config.setStream(disk)
+        config.setStream(_file_disk_stream)
         
         # Open eid keyfile
         if keyfile:
@@ -98,7 +105,6 @@ class App(tk.Frame):
         return disk
 
     def _get_disktype(self, disk):
-        
         stream = disk.getDataProvider()
 
         ps3_magic1 = bytes.fromhex('0FACE0FF')
@@ -133,12 +139,12 @@ class App(tk.Frame):
             Logger.log("Set disk type to PS4: Partition user")
 
     def scan_partition(self, disk, partition_name):
-        
         scanner = Scanner(disk, partition_name)
         scan_logfile = None
         
         load_path = os.path.normpath(f"{os.getcwd()}\\scans") + "\\" + os.path.basename(self._current_diskpath).split(".")[0]
         load_path = load_path.lower()
+        load_path += "(deep)" if self._deep_scan else "(fast)"
 
         # If this scan hasn't completed before write a log
         if not os.path.exists(load_path + "\\scan-log.txt"):
@@ -160,9 +166,9 @@ class App(tk.Frame):
         nodes = linker.get_root_nodes()
         return nodes
 
-    def identify_unknown_node_filetypes(self, disk, partition_name, nodes):
+    def identify_unknown_node_filetypes(self, stream, nodes):
         Logger.log("Identifying unknown files filetypes...")
-        inode_ident = InodeIdentifier(disk, partition_name)
+        inode_ident = InodeIdentifier(stream)
         identified_count = 0
         for node in nodes:
             node:Node
@@ -176,7 +182,7 @@ class App(tk.Frame):
         Logger.log(f"Identified {identified_count} unknown filetypes!")
         return nodes
 
-    def display_scan_results_tab(self, nodes):
+    def display_scan_results_tab(self, stream, nodes):
         if self._splash:
             self._splash.pack_forget()
             self._splash.grid_forget()
@@ -189,13 +195,13 @@ class App(tk.Frame):
             self._master.geometry("1440x960")
 
             # Create frame for viewing the scan results
-            self._recovered_file_browser = RecoveredFilesBrowser(self._tab_control, nodes)
+            self._recovered_file_browser = RecoveredFilesBrowser(self._tab_control, stream, nodes)
             
             # Put the tab for the frame in the _tab_control
             self._tab_control.add(self._recovered_file_browser, text="File System")
             self._tab_control.pack(expand = 1, fill =BOTH)
 
-    def display_open_image_modal(self):
+    def display_open_hdd_img_modal(self):
         open_image_modal = OpenHDDImageModal()
         open_image_modal.on_scan_initiated += self.begin_disk_scan
 
@@ -288,8 +294,9 @@ class FindDialog(tk.simpledialog.Dialog):
 
 
 class RecoveredFilesBrowser(tk.Frame):
-    def __init__(self, root, nodes):
+    def __init__(self, root, stream, nodes):
         super(RecoveredFilesBrowser, self).__init__()
+        self._stream = stream
         self.item_right_click_on = None
         self._search_text = ""
         self._find_recoverable_only = False
@@ -469,74 +476,9 @@ class RecoveredFilesBrowser(tk.Frame):
     def recover_selected_files(self):
         outpath = filedialog.askdirectory()
         if outpath == '':
-            return 
-        Logger.log("Recover files...")
-        recover_items = []
-        for item in self.fs_tree.selection():
-            recover_items.append(item)
-            child_items = self.get_all_nodes(item)
-            for item in child_items:
-                recover_items.append(item)
-
-        logfile = open(outpath + '\\recovery-log.txt','w')
-        Logger.streams.append(logfile)
-
-        for item in recover_items:
-            node:Node = self.node_map[item]
-
-            # Create any parent folders for the file
-            item_path = self.get_item_full_path(item)
-            path = outpath + "\\" + item_path
-            path = os.path.normpath(path)
-            dirname = os.path.dirname(__file__)
-            fullpath = os.path.join(dirname, path)
-            if not os.path.exists(fullpath):
-                os.makedirs(fullpath)
-                self.set_file_ts(fullpath, node)
-            
-            # Read blocks
-            if node.get_type() == NodeType.FILE:
-
-                block_indexes = []
-                file_bytes = bytearray()
-                inode = node.get_inode()
-
-                # If an inode exists read the inodes blocks
-                if inode is not None:
-                    # Read direct blocks
-                    block_indexes = inode.get_block_indexes(self._stream, self._super_block)
-                    # Read data
-                    remaining = node.get_size()
-                    required_blocks = math.ceil(remaining / self._super_block.bsize)
-                    block_count = 0
-                    while remaining > 0:
-                        if block_count+1 > len(block_indexes):
-                            Logger.log(f"Error: Not all block indexes ({block_count}/{required_blocks}) recovered")
-                            break
-                        index = block_indexes[block_count]
-                        data_offset = index * self._super_block.fsize
-                        self._stream.seek(data_offset)
-                        read = min(remaining, self._super_block.bsize)
-                        Logger.log(f"Read {read} bytes at offset: 0x{data_offset:X}")
-                        file_bytes += self._stream.read(read)
-                        remaining -= read
-                        block_count += 1
-                    Logger.log(f"Recovered: {item_path}{self.fs_tree.item(item)['text']}")
-                else:
-                    Logger.log(f"Recovered [Direct Only]: {item_path}{self.fs_tree.item(item)['text']}")
-                
-                # Write the file     
-                file_path = fullpath + "\\" + self.fs_tree.item(item)['text']
-                file_path = os.path.normpath(file_path)
-
-                with open(file_path, 'wb') as f:
-                    f.write(file_bytes)
-                
-                self.set_file_ts(file_path, node)
-            
-        
-        Logger.log("Recovery Completed!")
-        Logger.remove_stream(logfile)
+            return
+        filewriter = FileWriter(self._stream, self.fs_tree, self.node_map)
+        filewriter.write_items(outpath, self.fs_tree.selection())
         
     def format_bytes(self, filesize):
         for count in ['bytes','KB','MB','GB']:

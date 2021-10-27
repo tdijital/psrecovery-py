@@ -1,8 +1,6 @@
-import argparse
-import os
 import sys
 import tkinter as tk
-from tkinter import PhotoImage, Label
+from tkinter import PhotoImage
 
 from common.logger import Logger
 from gui.app import App

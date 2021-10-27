@@ -146,66 +146,71 @@ def get_inode_class():
             self._offset = offset
         def get_offset(self):
             return self._offset
-        def get_block_indexes(self, stream, super_block):
-            max_bindex = stream.getLength() / super_block.fsize
-
-            def read_block_indexes(blocktable_index, stream=stream, super_block=super_block):
-                sb:SuperBlock = super_block
-                if max_bindex < blocktable_index:
-                    Logger.log(f"Warning block table index is out of bounds: {blocktable_index:X}")
-                    return
-                block_table_offset = blocktable_index * sb.fsize
-                stream.seek(block_table_offset)
-                blocks_indexes = []
-                blockcount = 0
-                while blockcount < sb.nindir:
-                    if endianness is Endianness.LITTLE:
-                        block_index = struct.unpack("<Q", stream.read(8))[0]
-                    else:
-                        block_index = struct.unpack(">Q", stream.read(8))[0]
-                    if max_bindex < block_index:
-                        Logger.log(f"Warning block index is out of bounds: {block_index:X}")
-                        break
-                    if block_index == 0:
-                        break
-                    # Logger.log(f"Read block [{blockcount}] index: {block_index:X} at offset 0x{block_table_offset + (blockcount*0x8):X}")
-                    blocks_indexes.append(block_index)
-                    blockcount += 1
-                return blocks_indexes
-            
-            indexes = []
-            count = 0
-            for index in self.db:
-                if index == 0:
-                    break
-                if max_bindex < index:
-                    Logger.log(f"Warning db index is out of bounds: {index:X}")
-                    index = 0
-                # Logger.log(f"read db[{count}] block index: {index:X} at offset 0x{self._offset + 0x70 + (count*0x8):X}")
-                indexes.append(index)
-                count += 1
-            
-            # Read indirect blocks
-            if self.ib[0] > 0:
-                btable_index = self.ib[0]
-                indexes += read_block_indexes(btable_index)
-            if self.ib[1] > 0:
-                ib_table_index = self.ib[1]
-                btable = read_block_indexes(ib_table_index)
-                for btable_index in btable:
-                    indexes += read_block_indexes(btable_index)
-            if self.ib[2] > 0:
-                ib_table_index = self.ib[2]
-                ib_table = read_block_indexes(ib_table_index)
-                for ib_ib_table_index in ib_table:
-                    btable = read_block_indexes(ib_ib_table_index)
-                    for btable_index in btable:
-                        indexes += read_block_indexes(btable_index)
-            
-            return indexes
     return Inode
 
 def inode_is_directory(inode):
     #  We can also check the following:
     #   - 0100000 is set for files (IFREG)
     return inode.mode & 0x4000
+
+class InodeReader():
+    def __init__(self, stream):
+        self._stream = stream
+        self._superblock = SuperBlock(stream)
+        self._max_bindex = self._stream.getLength() / self._superblock.fsize
+
+    def get_block_indexes(self, inode):
+        indexes = []
+        for index in inode.db:
+            if index == 0 or  self._max_bindex < index:
+                break
+            indexes.append(index)
+        
+        # Read indirect blocks
+        if inode.ib[0] > 0:
+            btable_index = inode.ib[0]
+            indexes += self.read_block_indexes_at_index(btable_index)
+        if inode.ib[1] > 0:
+            ib_table_index = inode.ib[1]
+            btable = self.read_block_indexes_at_index(ib_table_index)
+            for btable_index in btable:
+                indexes += self.read_block_indexes_at_index(btable_index)
+        if inode.ib[2] > 0:
+            ib_table_index = inode.ib[2]
+            ib_table = self.read_block_indexes_at_index(ib_table_index)
+            for ib_ib_table_index in ib_table:
+                btable = self.read_block_indexes_at_index(ib_ib_table_index)
+                for btable_index in btable:
+                    indexes += self.read_block_indexes_at_index(btable_index)
+        
+        return indexes
+
+    def read_block_indexes_at_offset(self, block_table_offset):
+        self.read_block_indexes_at_index(block_table_offset/self._superblock.fsize)
+
+    def read_block_indexes_at_index(self, blocktable_index):
+        if self._max_bindex < blocktable_index:
+            return
+        block_table_offset = blocktable_index * self._superblock.fsize
+        self._stream.seek(block_table_offset)
+        blocks_indexes = []
+        blockcount = 0
+        while blockcount < self._superblock.nindir:
+            if endianness is Endianness.LITTLE:
+                block_index = struct.unpack("<Q", self._stream.read(8))[0]
+            else:
+                block_index = struct.unpack(">Q", self._stream.read(8))[0]
+            if self._max_bindex < block_index:
+                break
+            if block_index == 0:
+                break
+            # Logger.log(f"Read block [{blockcount}] index: {block_index:X} at offset 0x{block_table_offset + (blockcount*0x8):X}")
+            blocks_indexes.append(block_index)
+            blockcount += 1
+        return blocks_indexes
+
+    def fill_missing_block_indexes(self, block_indexes, required_blocks):
+        missing_index_count = required_blocks - len(block_indexes)
+        last_valid_index = block_indexes[-1]
+        for i in missing_index_count:
+            block_indexes.append(last_valid_index + i)

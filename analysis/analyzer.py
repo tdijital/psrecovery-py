@@ -5,7 +5,8 @@ import os
 import disklib
 
 from common.logger import Logger
-from .ufs import get_direct_class, get_inode_class, ino_to_offset, inode_is_directory, SuperBlock, endianness, Endianness
+from .ufs import InodeReader, get_direct_class, get_inode_class, ino_to_offset, inode_is_directory, SuperBlock, endianness, Endianness
+from analysis.node import Node, NodeType
 
 def print_directory(root, depth=0):
     for inode in root:
@@ -21,101 +22,6 @@ def print_directory(root, depth=0):
         Logger.log('    '*depth + str(inode.get_name()) + f' (Type:{typ}, HasInode:{inode.get_inode() != None}, InodeOffset:{inode_offset}, InodeIndex:{inode_index} , DirectOffset:{direct_offset})')
         if inode.get_type() == 1:
             print_directory(inode.get_children(), depth+1)
-
-
-class NodeType:
-    FILE = 0
-    DIRECTORY = 1
-    THIS = 2
-    PARENT = 3
-
-
-class Node:
-    def __init__(self, typ):
-        self._name = None
-        self._size = None
-        self._creation_time = None
-        self._last_access_time = None
-        self._last_modified_time = None
-        self._flags = None
-        self._direct = None
-        self._direct_offset = None
-        self._directory_offset = None
-        self._inode = None
-        self._inode_offset = None
-        self._children = []
-        self._parents = []
-        self._type = typ
-        self._file_ext = None
-        self._active = False
-
-    def set_active(self, active):
-        self._active = active
-    def get_active(self):
-        return self._active
-    def set_name(self, name):
-        self._name = name
-    def get_name(self):
-        return self._name
-    def set_creation_time(self, time):
-        self._creation_time = time
-    def set_last_access_time(self, time):
-        self._last_access_time = time
-    def set_last_modified_time(self, time):
-        self._last_modified_time = time
-    def get_creation_time(self):
-        return self._creation_time
-    def get_last_access_time(self):
-        return self._last_access_time
-    def get_last_modified_time(self):
-        return self._last_modified_time
-    def set_size(self, size):
-        self._size = size
-    def get_size(self):
-        return self._size
-    def get_type(self):
-        return self._type
-    def set_direct(self, direct):
-        self._direct = direct
-    def get_direct(self):
-        return self._direct
-    def set_direct_offset(self, offset):
-        self._direct_offset = offset
-    def get_direct_offset(self):
-        return self._direct_offset
-    def set_directory_offset(self, offset):
-        self._directory_offset = offset
-    def get_directory_offset(self):
-        return self._directory_offset
-    def set_inode(self, inode):
-        self._inode = inode
-        self.set_inode_offset(inode.get_offset())
-        self.set_size(inode.size)
-        self.set_creation_time(inode.ctime)
-        self.set_last_access_time(inode.atime)
-        self.set_last_modified_time(inode.mtime)
-    def get_inode(self):
-        return self._inode
-    def set_inode_offset(self, offset):
-        self._inode_offset = offset
-    def get_inode_offset(self):
-        return self._inode_offset
-    def get_inode_index(self):
-        return self._direct.ino
-    def get_children(self):
-        return self._children
-    def add_child(self, child):
-        self._children.append(child)
-    def get_parents(self):
-        return self._parents
-    def add_parent(self, parent):
-        self._parents.append(parent)
-    def set_file_ext(self, ext):
-        self._file_ext = ext
-    def get_file_ext(self):
-        return self._file_ext
-    def __repr__(self):
-        return self.get_name()
 
 class Directory:
     def __init__(self, offset):
@@ -154,17 +60,17 @@ class ScanResults:
 class Scanner:
     def __init__(self, disk, partition_name):
         self._stream = None  # The stream we will ultimately be reading from
-        self._sblk =  None
+        self._superblock =  None
         self._partition_name = partition_name
         self.scan_results = None
         self._initialize(disk, partition_name)
 
     def _initialize(self, disk, partition_name):
         partition = disk.getPartitionByName(partition_name)
-
         self._stream = partition.getDataProvider()
+        self._inode_reader = InodeReader(self._stream)
 
-        self._sblk = SuperBlock(self._stream)
+        self._superblock = SuperBlock(self._stream)
         
         vfs = partition.getVfs()
         vfs.mount()
@@ -174,8 +80,8 @@ class Scanner:
 
         self._active_inodes = self._get_all_offsets(root, 'inode')
         self._active_directs = self._get_all_offsets(root, 'dirent')
-        self._ninodes = (self._sblk.ipg * self._sblk.ncg)
-        self.max_block_index = self._stream.getLength() / self._sblk.fsize
+        self._ninodes = (self._superblock.ipg * self._superblock.ncg)
+        self.max_block_index = self._stream.getLength() / self._superblock.fsize
         self.inode_class = get_inode_class()
         self.direct_class = get_direct_class()
     
@@ -251,7 +157,7 @@ class Scanner:
 
     
     def _deep_scan(self):
-        self.scan_results = ScanResults(self._sblk, self._partition_name)
+        self.scan_results = ScanResults(self._superblock, self._partition_name)
         drive_length = self._stream.getLength()
         scan_interval = 0x100 # This will take forever but should never miss an inode or direct...
         for offset in range(0, drive_length, scan_interval):
@@ -285,23 +191,23 @@ class Scanner:
                 Logger.log(f"Percent Complete: {round((offset/drive_length)*100,2)}%")
 
     def _fast_scan(self):
-        inode_block_offset = self._sblk.iblkno * self._sblk.fsize
-        data_block_offset = self._sblk.dblkno * self._sblk.fsize
-        cgsize = self._sblk.fpg * self._sblk.fsize
+        inode_block_offset = self._superblock.iblkno * self._superblock.fsize
+        data_block_offset = self._superblock.dblkno * self._superblock.fsize
+        cgsize = self._superblock.fpg * self._superblock.fsize
         data_block_length = (cgsize - data_block_offset) + 0x14000
 
-        self.scan_results = ScanResults(self._sblk, self._partition_name)
+        self.scan_results = ScanResults(self._superblock, self._partition_name)
 
-        for cyl in range(self._sblk.ncg):
-            cyl_offset = (self._sblk.fpg * self._sblk.fsize) * cyl
-            Logger.log(f"Scanning cylinder group: {cyl}/{self._sblk.ncg}: 0x{cyl_offset:X}")
+        for cyl in range(self._superblock.ncg):
+            cyl_offset = (self._superblock.fpg * self._superblock.fsize) * cyl
+            Logger.log(f"Scanning cylinder group: {cyl}/{self._superblock.ncg}: 0x{cyl_offset:X}")
 
             # Read in the inode table
             inode_table_offset = cyl_offset + inode_block_offset
 
             # Check for any deleted inodes
             # We go through each inode in the inode table
-            for i in range(self._sblk.ipg):
+            for i in range(self._superblock.ipg):
                 inode_offset = inode_table_offset + (i * 0x100)
                 # Check if this inode is a non-deleted inode
                 #if True:
@@ -310,7 +216,7 @@ class Scanner:
                     # Check if this is an inode
                     if inode:
                         # This inode was deleted, so add it to the list
-                        inode_index = (cyl * self._sblk.ipg) + i
+                        inode_index = (cyl * self._superblock.ipg) + i
                         Logger.log(f"Deleted inode found at index {inode_index}, offset: 0x{inode_offset:X}")
                         self.scan_results.inode_map[inode_offset] = inode
 
@@ -324,9 +230,9 @@ class Scanner:
             while offset < data_end:
                 # Load a buffer into memory
                 self._stream.seek(offset, 0)
-                bufSize = min(bytesLeft, self._sblk.bsize)
+                bufSize = min(bytesLeft, self._superblock.bsize)
                 buf = self._stream.read(bufSize)
-                for block in range(0, bufSize, self._sblk.fsize):
+                for block in range(0, bufSize, self._superblock.fsize):
                     # First we'll check the first 0x18 bytes for the first two direct's
                     directs = buf[block:block+0x18]
                     # These tests check the d_type, d_namlen, and d_name fields
@@ -348,11 +254,11 @@ class Scanner:
         Logger.log("Looking for referenced directories scan may have missed...")
         for inode in self.scan_results.inode_map.values():
             if inode_is_directory(inode):
-                block_indexes = inode.get_block_indexes(self._stream, self._sblk)
-                block_offset = block_indexes[0] * self._sblk.fsize
+                block_indexes = self._inode_reader.get_block_indexes(inode)
+                block_offset = block_indexes[0] * self._superblock.fsize
                 parent_directory:Directory = self.scan_results.directory_map.get(block_offset)
                 for index in block_indexes:
-                    block_offset = index * self._sblk.fsize
+                    block_offset = index * self._superblock.fsize
                     if block_offset in self.scan_results.directory_map:
                         continue
                     directory = self._extract_directs(block_offset)
@@ -366,7 +272,7 @@ class Scanner:
     def _find_missing_inodes(self):
         Logger.log("Looking for referenced inodes scan may have missed...")
         for direct in self.scan_results.directs_list:
-            inode_offset = ino_to_offset(self._sblk, direct.ino)
+            inode_offset = ino_to_offset(self._superblock, direct.ino)
             if inode_offset in self.scan_results.inode_map:
                 continue
             inode = self._read_inode_at_offset(inode_offset)
@@ -381,7 +287,7 @@ class Scanner:
         # We just load each offset, then go to the offset in the disk and read the structures
         # into the inodes_found and directs_found variables
         Logger.log(f"Loading from files at: {loadpath}")
-        self.scan_results = ScanResults(self._sblk, self._partition_name)
+        self.scan_results = ScanResults(self._superblock, self._partition_name)
         inodes_list = []
         with open(loadpath + '\\inodes.txt', 'r') as fp:
             inodes_list = fp.readlines()
@@ -432,7 +338,7 @@ class Scanner:
 
         # Initial buffer
         self._stream.seek(addr)
-        buf = self._stream.read(self._sblk.bsize)
+        buf = self._stream.read(self._superblock.bsize)
 
         offset = 0
         direct = self._read_direct(buf, offset)
@@ -462,7 +368,7 @@ class Scanner:
 
             # We hit the end of a block
             # Maybe continue reading?
-            if offset >= self._sblk.bsize:
+            if offset >= self._superblock.bsize:
                 Logger.log(f"Log: Hit end of block when parsing direct table at 0x{addr:X}!")
                 return result
 
@@ -474,13 +380,13 @@ class Scanner:
             expected_end = offset + expected_length
             direct_end = offset + direct.reclen
 
-            if (expected_end + 8) >= self._sblk.bsize:
+            if (expected_end + 8) >= self._superblock.bsize:
                 Logger.log(f"Log: Hit end of block when parsing direct table at 0x{addr:X}!")
                 return result
                 
             direct = self._read_direct(buf, expected_end)
             if not direct:
-                if (direct_end + 8) >= self._sblk.bsize:
+                if (direct_end + 8) >= self._superblock.bsize:
                     Logger.log(f"Log: Hit end of block when parsing direct table at 0x{addr:X}!")
                     return result
                 direct = self._read_direct(buf, direct_end)
@@ -534,6 +440,7 @@ class UFS2Linker:
         
         partition = disk.getPartitionByName(self._scan_results.partition_name)
         self._stream = partition.getDataProvider()
+        self._inode_reader = InodeReader(self._stream)
 
         self._claimed_directories = {}
         self._claimed_inodes = {}
@@ -678,7 +585,7 @@ class UFS2Linker:
             if node.get_type() == NodeType.DIRECTORY:
                 inode = node.get_inode()
                 if inode:
-                    block_indexes = inode.get_block_indexes(self._stream, self._scan_results.superblock)
+                    block_indexes = self._inode_reader.get_block_indexes(inode)
                     # Directory is keyed to the block that the directory starts at, regardless of whether it spans multiple blocks.
                     directory_offset = block_indexes[0] * self._scan_results.superblock.fsize
                     directory:Directory = self._scan_results.directory_map.get(directory_offset)

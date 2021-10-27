@@ -218,10 +218,8 @@ class FileCarver():
                     Logger.log(str(tester))
 
 class InodeIdentifier():
-    def __init__(self, disk, partition_name):
-        self._partition = disk.getPartitionByName(partition_name)
-        self._stream = self._partition.getDataProvider()
-
+    def __init__(self, stream):
+        self._stream = stream
         self._superblock = SuperBlock(self._stream)
 
     def identify_unk_inode_filetype(self, inode):
