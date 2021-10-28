@@ -146,9 +146,11 @@ class App(tk.Frame):
         load_path = load_path.lower()
         load_path += "(deep)" if self._deep_scan else "(fast)"
 
-        # If this scan hasn't completed before write a log
-        if not os.path.exists(load_path + "\\scan-log.txt"):
-            scan_logfile = open('scan-log.txt','w', encoding='utf8')
+        # If this scan hasn't completed before write a scan-log
+        if not os.path.exists(load_path + "\\inodes.txt"):
+            if not os.path.exists(load_path):
+                os.makedirs(load_path)
+            scan_logfile = open(load_path + '\\scan-log.txt','w', encoding='utf8')
             Logger.streams.append(scan_logfile)
 
         # Find deleted inodes and directs
