@@ -159,9 +159,9 @@ class Scanner:
     def _deep_scan(self):
         self.scan_results = ScanResults(self._superblock, self._partition_name)
         drive_length = self._stream.getLength()
-        scan_interval = 0x100 # This will take forever but should never miss an inode or direct...
-        for offset in range(0, drive_length, scan_interval):
+        for offset in range(0, drive_length, self._superblock.fsize):
             self._stream.seek(offset)
+            # test for directories
             direct_check = self._stream.read(0x18)
             test1 = direct_check[6] == 0x4 and direct_check[7] == 0x1 and direct_check[8:9] == b'.'
             if test1:
@@ -172,20 +172,13 @@ class Scanner:
                     self.scan_results.directs_list.extend(directory.get_directs())
                     self.scan_results.directory_map[offset] = directory
                     continue
-            # Check if inode
-            inode = self._read_inode_at_offset(offset)
-            if inode:
-                self.scan_results.inode_map[offset] = inode
-                Logger.log(f"Deleted inode found at offset: 0x{offset:X}")
-                _offset = offset + 0x100
-                while _offset < offset + scan_interval:
-                    inode = self._read_inode_at_offset(_offset)
-                    if inode:
-                        Logger.log(f"Deleted inode found at offset: 0x{_offset:X}")
-                        self.scan_results.inode_map[_offset] = inode
-                        _offset += 0x100
-                    else:
-                        break
+            # test for inodes
+            for inode_offset in range(offset, offset + self._superblock.fsize, 0x100):
+                # Check if inode
+                inode = self._read_inode_at_offset(inode_offset)
+                if inode:
+                    self.scan_results.inode_map[offset] = inode
+                    Logger.log(f"Deleted inode found at offset: 0x{inode_offset:X}")
                         
             if (offset & 0xfffffff) == 0:
                 Logger.log(f"Percent Complete: {round((offset/drive_length)*100,2)}%")
@@ -201,7 +194,7 @@ class Scanner:
         for cyl in range(self._superblock.ncg):
             cyl_offset = (self._superblock.fpg * self._superblock.fsize) * cyl
             Logger.log(f"Scanning cylinder group: {cyl}/{self._superblock.ncg}: 0x{cyl_offset:X}")
-
+ 
             # Read in the inode table
             inode_table_offset = cyl_offset + inode_block_offset
 
