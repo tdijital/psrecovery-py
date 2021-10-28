@@ -66,7 +66,9 @@ class App(tk.Frame):
             self._current_disk = self._open_disk(path, keyfile, is_deep_scan)
 
             # Scan the disks partition
+            t1 = time.time()
             scan_results = self.scan_partition(self._current_disk, self._current_partition_name)
+            Logger.log(f"Total Scan Time: {time.strftime('%H:%M:%S', time.gmtime(t1-time.time()))}")
 
             # Create nodes from the scans results
             nodes = self.create_nodes_from_scan_results(self._current_disk, scan_results)
