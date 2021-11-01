@@ -190,7 +190,7 @@ class Scanner:
                 # Check if inode
                 inode = self._read_inode_at_offset(inode_offset)
                 if inode:
-                    self.scan_results.inode_map[offset] = inode
+                    self.scan_results.inode_map[inode_offset] = inode
                     Logger.log(f"Deleted inode found at offset: 0x{inode_offset:X}")
                         
             if (offset & 0xfffffff) == 0:
