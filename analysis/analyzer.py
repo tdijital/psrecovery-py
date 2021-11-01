@@ -1,6 +1,7 @@
 import ctypes
 import time
 import os
+from datetime import timedelta
 
 import disklib
 
@@ -156,6 +157,8 @@ class Scanner:
             Logger.log("Scanning drive")
             assert(ctypes.sizeof(self.direct_class) == 0x8)
             assert(ctypes.sizeof(self.inode_class) == 0x100)
+            
+            t1 = time.time()
 
             # Start scan for deleted files
             self._deep_scan() if deep_scan else self._fast_scan()
@@ -164,6 +167,7 @@ class Scanner:
             self._find_missing_inodes()
                                            
             Logger.log("Finished scanning!")
+            Logger.log(f"Total Scan Time: {timedelta(seconds=time.time()-t1)}")
 
             # Save the offsets to files so we don't have to go through the entire disk again
             self._save_scan_to_files(loadpath)
