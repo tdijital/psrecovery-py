@@ -61,27 +61,26 @@ class App(tk.Frame):
         self._master.mainloop()
 
     def begin_disk_scan(self, path, keyfile=None, is_deep_scan=False):
-        with open(path):
-            # Open the disk
-            self._current_disk = self._open_disk(path, keyfile, is_deep_scan)
+        # Open the disk
+        self._current_disk = self._open_disk(path, keyfile, is_deep_scan)
 
-            # Scan the disks partition
-            t1 = time.time()
-            scan_results = self.scan_partition(self._current_disk, self._current_partition_name)
-            Logger.log(f"Total Scan Time: {time.strftime('%H:%M:%S', time.gmtime(t1-time.time()))}")
+        # Scan the disks partition
+        t1 = time.time()
+        scan_results = self.scan_partition(self._current_disk, self._current_partition_name)
+        Logger.log(f"Total Scan Time: {time.strftime('%H:%M:%S', time.gmtime(t1-time.time()))}")
 
-            # Create nodes from the scans results
-            nodes = self.create_nodes_from_scan_results(self._current_disk, scan_results)
+        # Create nodes from the scans results
+        nodes = self.create_nodes_from_scan_results(self._current_disk, scan_results)
 
-            # Create Stream
-            partition = self._current_disk.getPartitionByName(self._current_partition_name)
-            stream = partition.getDataProvider()
+        # Create Stream
+        partition = self._current_disk.getPartitionByName(self._current_partition_name)
+        stream = partition.getDataProvider()
 
-            # Attempt to identify unknown nodes with inodes
-            nodes = self.identify_unknown_node_filetypes(stream, nodes)
+        # Attempt to identify unknown nodes with inodes
+        nodes = self.identify_unknown_node_filetypes(stream, nodes)
 
-            # Show results
-            self.display_scan_results_tab(stream, nodes)
+        # Show results
+        self.display_scan_results_tab(stream, nodes)
 
     def _open_disk(self, path, keyfile=None, is_deep_scan=False):
         global _file_disk_stream
@@ -482,8 +481,12 @@ class RecoveredFilesBrowser(tk.Frame):
         outpath = filedialog.askdirectory()
         if outpath == '':
             return
+        Logger.streams.append(sys.stdout)
+        logfile = open(outpath + 'dump-log.txt','w', encoding='utf8')
+        Logger.streams.append(logfile)
         filewriter = FileWriter(self._stream, self.fs_tree, self.node_map)
         filewriter.write_items(outpath, self.fs_tree.selection())
+        Logger.streams.remove(logfile)
         
     def format_bytes(self, filesize):
         for count in ['bytes','KB','MB','GB']:

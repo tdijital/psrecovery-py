@@ -221,12 +221,15 @@ class InodeIdentifier():
     def __init__(self, stream):
         self._stream = stream
         self._superblock = SuperBlock(self._stream)
+        self._max_block_index = self._stream.getLength() / self._superblock.fsize
 
     def identify_unk_inode_filetype(self, inode):
         for file_sig in all_filesigs:
-            # Pass the inodes db[0] to the file identifier
             offset = inode.db[0] * self._superblock.fsize
+            if offset > self._max_block_index:      # This shouldn't happen. No inodes should get past the scan that have invalid db bindex
+                continue
             self._stream.seek(offset)
             tester = file_sig(self._stream, offset)
             if tester.test():
                 return tester
+        return None

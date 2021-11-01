@@ -49,7 +49,8 @@ class FileWriter():
             required_blocks = math.ceil(remaining / self._superblock.bsize)
             total_blocks = len(block_indexes)
             if required_blocks != total_blocks:
-                Logger.log(f"File {node.get_name()} is missing {total_blocks-required_blocks} block indexes. ({total_blocks/required_blocks}%)")
+                Logger.log(f"+ File {node.get_name()} is missing {total_blocks-required_blocks} block indexes of total {total_blocks}")
+                Logger.log(f"|- Attempting to fill missing data blocks beginning at 0x{total_blocks*self._superblock.fsize:X}")
                 self._inode_reader.fill_missing_block_indexes(block_indexes, required_blocks)
             block_count = 0
             while remaining > 0:

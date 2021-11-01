@@ -7,6 +7,7 @@ import disklib
 from common.logger import Logger
 from .ufs import InodeReader, get_direct_class, get_inode_class, ino_to_offset, inode_is_directory, SuperBlock, endianness, Endianness
 from analysis.node import Node, NodeType
+import analysis.ufs
 
 def print_directory(root, depth=0):
     for inode in root:
@@ -97,11 +98,27 @@ class Scanner:
     
     def _is_valid_block_table(self, indexes):
         for x in range(2+12+3):
-            index = int.from_bytes(indexes[(x*8):(x*8)+8], byteorder=endianness)
-            if -1 <= index > self.max_block_index:
+            index = int.from_bytes(indexes[(x*8):(x*8)+8], byteorder=analysis.ufs.endianness)
+            if index > self.max_block_index or index < 0:
                 return False
         return True
 
+    def _get_year_from_sec(self, sec):
+        if sec > 32536799999 or sec <= 0:
+            return 0
+        return time.strptime(time.ctime(sec)).tm_year
+    
+    def _check_inode_has_valid_time(self, inode):
+        min_year = 2000
+        max_year = 2050
+        if self._get_year_from_sec(inode.atime) > max_year or self._get_year_from_sec(inode.atime) < min_year:
+            return False
+        if self._get_year_from_sec(inode.mtime) > max_year or self._get_year_from_sec(inode.mtime) < min_year:
+            return False
+        if self._get_year_from_sec(inode.ctime) > max_year or self._get_year_from_sec(inode.ctime) < min_year:
+            return False
+        return True
+    
     def _read_inode_at_offset(self, offset):
         self._stream.seek(offset)
         data = self._stream.read(0x100)
@@ -119,15 +136,11 @@ class Scanner:
             return None
         if inode.nlink > 0xF00:
             return None
-        if inode.size > 1099511627776 or inode.size < 0:
+        if inode.size > 1099511627776 or inode.size <= 0:
             return None
-        if(inode.atime < 32536799999 and inode.mtime < 32536799999 and inode.ctime < 32536799999):
-            if(inode.atime > 0 and inode.mtime > 0 and inode.ctime > 0):
-                return inode
-            else:
-                return None
-        else:
+        if not self._check_inode_has_valid_time(inode):
             return None
+        return inode
 
     def scan(self, loadpath, deep_scan=False):
 
@@ -580,6 +593,9 @@ class UFS2Linker:
                 if inode:
                     block_indexes = self._inode_reader.get_block_indexes(inode)
                     # Directory is keyed to the block that the directory starts at, regardless of whether it spans multiple blocks.
+                    if len(block_indexes) == 0:
+                        Logger.log(f"WTF?! An inode with no block indexes was in the scan! inode at 0x{inode.get_offset():X}")
+                        continue
                     directory_offset = block_indexes[0] * self._scan_results.superblock.fsize
                     directory:Directory = self._scan_results.directory_map.get(directory_offset)
                     if directory:

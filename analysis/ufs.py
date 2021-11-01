@@ -162,7 +162,7 @@ class InodeReader():
     def get_block_indexes(self, inode):
         indexes = []
         for index in inode.db:
-            if index == 0 or  self._max_bindex < index:
+            if index == 0 or self._max_bindex < index:
                 break
             indexes.append(index)
         
@@ -189,11 +189,11 @@ class InodeReader():
         self.read_block_indexes_at_index(block_table_offset/self._superblock.fsize)
 
     def read_block_indexes_at_index(self, blocktable_index):
+        block_indexes = []
         if self._max_bindex < blocktable_index:
-            return
+            return block_indexes
         block_table_offset = blocktable_index * self._superblock.fsize
         self._stream.seek(block_table_offset)
-        blocks_indexes = []
         blockcount = 0
         while blockcount < self._superblock.nindir:
             if endianness is Endianness.LITTLE:
@@ -205,12 +205,12 @@ class InodeReader():
             if block_index == 0:
                 break
             # Logger.log(f"Read block [{blockcount}] index: {block_index:X} at offset 0x{block_table_offset + (blockcount*0x8):X}")
-            blocks_indexes.append(block_index)
+            block_indexes.append(block_index)
             blockcount += 1
-        return blocks_indexes
+        return block_indexes
 
     def fill_missing_block_indexes(self, block_indexes, required_blocks):
         missing_index_count = required_blocks - len(block_indexes)
         last_valid_index = block_indexes[-1]
         for i in missing_index_count:
-            block_indexes.append(last_valid_index + i)
+            block_indexes.append(last_valid_index + (0x4 * i))
