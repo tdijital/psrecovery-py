@@ -225,9 +225,9 @@ class InodeIdentifier():
 
     def identify_unk_inode_filetype(self, inode):
         for file_sig in all_filesigs:
-            offset = inode.db[0] * self._superblock.fsize
-            if offset > self._max_block_index:      # This shouldn't happen. No inodes should get past the scan that have invalid db bindex
+            if inode.db[0] > self._max_block_index:      # This shouldn't happen. No inodes should get past the scan that have invalid db bindex
                 continue
+            offset = inode.db[0] * self._superblock.fsize
             self._stream.seek(offset)
             tester = file_sig(self._stream, offset)
             if tester.test():
