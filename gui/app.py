@@ -480,7 +480,6 @@ class RecoveredFilesBrowser(tk.Frame):
         outpath = filedialog.askdirectory()
         if outpath == '':
             return
-        Logger.streams.append(sys.stdout)
         logfile = open(outpath + 'dump-log.txt','w', encoding='utf8')
         Logger.streams.append(logfile)
         filewriter = FileWriter(self._stream, self.fs_tree, self.node_map)
