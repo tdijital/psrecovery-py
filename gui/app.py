@@ -55,10 +55,10 @@ class App(tk.Frame):
         self.show_splash()
 
     def show_splash(self):
-        splash_image = PhotoImage(file='assets/app-icon2.gif')
-        self._splash = inner_frame = tk.Frame(self._master, borderwidth=25, bg="black")
+        splash_image = PhotoImage(file='assets/app-icon.gif')
+        self._splash = inner_frame = tk.Frame(self._master, borderwidth=25, bg="#1F67F6")
         inner_frame.pack(fill="both", expand=True)
-        Label(inner_frame, image=splash_image, background='black').pack(fill="both", expand=True)
+        Label(inner_frame, image=splash_image, background='#1F67F6').pack(fill="both", expand=True)
         self._master.mainloop()
 
     def begin_disk_scan(self, path, keyfile=None, is_deep_scan=False):

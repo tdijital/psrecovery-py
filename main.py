@@ -15,8 +15,9 @@ def main(path=None, keyfile=None, is_deep_scan=False):
     # GUI Root
     root = tk.Tk()
     root.title("PS Recovery Prototype")
-    icon = PhotoImage(file='assets/app-icon2.gif')
+    icon = PhotoImage(file='assets/app-icon.gif')
     root.iconphoto(True, icon)
+    
 
     if path:
         app = App(root, path, keyfile, is_deep_scan)
