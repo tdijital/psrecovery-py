@@ -44,11 +44,11 @@ class Directory:
 
 
 class ScanResults:
-    def __init__(self, superblock, partition_name):
+    def __init__(self, superblock, partition_name, active_directs, active_inodes):
         # Mapping of address to Inode
         self.inode_map = {}
-        # Mapping of address to Direct #TODO: Make this a dictionary
-        self.directs_list = []
+        # Mapping of address to Direct
+        self.directs_map = {}
         # Mapping of address to collection of Direct
         self.directory_map = {}
         # Map an ino to map of directs that reference the inode
@@ -57,6 +57,30 @@ class ScanResults:
         self.superblock:SuperBlock = superblock
         # Name of the partition this scan belongs to
         self.partition_name = partition_name
+        # Directs in the active file system
+        self.active_directs = active_directs
+        # Inodes in the active file system
+        self.active_inodes = active_inodes
+    
+    def add_directory(self, directory):
+        self.directory_map[directory.get_offset()] = directory
+        for direct in directory.get_directs():
+            if direct.get_name() == "." or direct.get_name() == "..":
+                continue
+            if direct.get_offset() in self.active_directs:
+                continue
+            self.ino_direct_map[direct.ino] = direct
+            self.directs_map[direct.get_offset()] = direct
+
+    def add_inode(self, inode):
+        if inode.get_offset() in self.active_inodes:
+            return
+        self.inode_map[inode.get_offset()] = inode
+
+    def add_direct(self, direct):
+        if direct.get_offset() in self.active_directs:
+            return
+        self.directs_map[direct.get_offset()] = direct
 
 
 class Scanner:
@@ -65,6 +89,7 @@ class Scanner:
         self._superblock =  None
         self._partition_name = partition_name
         self.scan_results = None
+        self._loaded_from_files = False
         self._initialize(disk, partition_name)
 
     def _initialize(self, disk, partition_name):
@@ -145,12 +170,9 @@ class Scanner:
 
     def scan(self, loadpath, deep_scan=False):
 
-        loaded_from_file = False
-
-        if os.path.exists(loadpath + '\\inodes.txt') and os.path.exists(loadpath + '\\directories.txt'):
-            # Load offsets from previous results that have been stored in the above two txt files
+        if os.path.exists(loadpath + '\\inodes.txt') and os.path.exists(loadpath + '\\directories.txt') and os.path.exists(loadpath + '\\directs.txt'):
+            self._loaded_from_files = True
             self._load_from_files(loadpath)
-            loaded_from_file = True
         else:
             # There are no saved results, let's start a new scan
             Logger.log(f"No previous scan found in {loadpath}")
@@ -174,7 +196,7 @@ class Scanner:
 
     
     def _deep_scan(self):
-        self.scan_results = ScanResults(self._superblock, self._partition_name)
+        self.scan_results = ScanResults(self._superblock, self._partition_name, self._active_directs, self._active_inodes)
         drive_length = self._stream.getLength()
         for offset in range(0, drive_length, self._superblock.fsize):
             self._stream.seek(offset)
@@ -185,16 +207,15 @@ class Scanner:
                 test2 = direct_check[0x12] == 0x4 and direct_check[0x13] == 0x2 and direct_check[0x14:0x16] == b'..'
                 if test2:
                     # We found a direct table, so lets read out the entire table
-                    directory = self._extract_directs(offset)
-                    self.scan_results.directs_list.extend(directory.get_directs())
-                    self.scan_results.directory_map[offset] = directory
+                    directory = self._read_directory(offset)
+                    self.scan_results.add_directory(directory)
                     continue
             # test for inodes
             for inode_offset in range(offset, offset + self._superblock.fsize, 0x100):
                 # Check if inode
                 inode = self._read_inode_at_offset(inode_offset)
                 if inode:
-                    self.scan_results.inode_map[inode_offset] = inode
+                    self.scan_results.add_inode(inode)
                     Logger.log(f"Deleted inode found at offset: 0x{inode_offset:X}")
                         
             if (offset & 0xfffffff) == 0:
@@ -206,7 +227,7 @@ class Scanner:
         cgsize = self._superblock.fpg * self._superblock.fsize
         data_block_length = (cgsize - data_block_offset) + 0x14000
 
-        self.scan_results = ScanResults(self._superblock, self._partition_name)
+        self.scan_results = ScanResults(self._superblock, self._partition_name, self._active_directs, self._active_inodes)
 
         for cyl in range(self._superblock.ncg):
             cyl_offset = (self._superblock.fpg * self._superblock.fsize) * cyl
@@ -228,8 +249,7 @@ class Scanner:
                         # This inode was deleted, so add it to the list
                         inode_index = (cyl * self._superblock.ipg) + i
                         Logger.log(f"Deleted inode found at index {inode_index}, offset: 0x{inode_offset:X}")
-                        self.scan_results.inode_map[inode_offset] = inode
-
+                        self.scan_results.add_inode(inode)
             # Get the offset of the data block
             data_start = cyl_offset + data_block_offset
             data_end = data_start + data_block_length
@@ -252,14 +272,18 @@ class Scanner:
                     test2 = directs[0x12] == 0x4 and directs[0x13] == 0x2 and directs[0x14:0x16] == b'..'
                     if test2:
                         # We found a direct table, so lets read out the entire table
-                        directory = self._extract_directs(offset+block)
+                        directory = self._read_directory(offset+block)
                         if directory:
-                            self.scan_results.directs_list.extend(directory.get_directs())
-                            self.scan_results.directory_map[offset+block] = directory
+                            self.scan_results.add_directory(directory)
 
                 bytesLeft -= bufSize
                 offset += bufSize
 
+    #
+    # TODO: Split this into two functions 
+    # 1) Add directs to directories that extend beyond a block 
+    # 2) Find any missing referenced inodes
+    #
     def _find_missing_directs(self):
         Logger.log("Looking for referenced directories scan may have missed...")
         for inode in self.scan_results.inode_map.values():
@@ -271,24 +295,24 @@ class Scanner:
                     block_offset = index * self._superblock.fsize
                     if block_offset in self.scan_results.directory_map:
                         continue
-                    directory = self._extract_directs(block_offset)
+                    directory = self._read_directory(block_offset, False)
                     if directory:
-                        self.scan_results.directs_list.extend(directory.get_directs())
                         if parent_directory:
-                            parent_directory.combine_directories(directory)
-                        else:
-                            self.scan_results.directory_map[block_offset] = directory
+                            parent_directory.combine_directories(directory) # NOTE: This maybe isn't needed. UFS2Linker may handle it.
+                        for direct in directory.get_directs():
+                            self.scan_results.add_direct(direct)
+
                     
     def _find_missing_inodes(self):
         Logger.log("Looking for referenced inodes scan may have missed...")
-        for direct in self.scan_results.directs_list:
+        for direct in self.scan_results.directs_map.values():
             inode_offset = ino_to_offset(self._superblock, direct.ino)
             if inode_offset in self.scan_results.inode_map:
                 continue
             inode = self._read_inode_at_offset(inode_offset)
             if inode:
                 Logger.log(f"Deleted inode found at index unknown, offset: 0x{inode_offset:X}")
-                self.scan_results.inode_map[inode_offset] = inode
+                self.scan_results.add_inode(inode)
 
 
     def _load_from_files(self, loadpath):
@@ -297,36 +321,41 @@ class Scanner:
         # We just load each offset, then go to the offset in the disk and read the structures
         # into the inodes_found and directs_found variables
         Logger.log(f"Loading from files at: {loadpath}")
-        self.scan_results = ScanResults(self._superblock, self._partition_name)
+        self.scan_results = ScanResults(self._superblock, self._partition_name, self._active_directs, self._active_inodes)
         inodes_list = []
         with open(loadpath + '\\inodes.txt', 'r') as fp:
             inodes_list = fp.readlines()
         directories = []
         with open(loadpath + '\\directories.txt', 'r') as fp:
             directories = fp.readlines()
-        # directs_list = []
-        # with open('directs.txt', 'r') as fp:
-        #     directs_list = fp.readlines()
+        directs = []
+        with open(loadpath + '\\directs.txt', 'r') as fp:
+            directs = fp.readlines()
 
         # Not really
         max_file_length = self._stream.getLength()
 
         for line in inodes_list:
             offset = int(line.strip())
-            if offset in self._active_inodes:
-                continue
             self._stream.seek(offset)
             data = self._stream.read(0x100)
             inode = self.inode_class.from_buffer(bytearray(data))
             inode.set_offset(offset)
-            self.scan_results.inode_map[offset] = inode
+            self.scan_results.add_inode(inode)
 
         for line in directories:
             offset = int(line.strip())
             self._stream.seek(offset)
-            directory = self._extract_directs(offset)
-            self.scan_results.directs_list.extend(directory.get_directs())
-            self.scan_results.directory_map[offset] = directory
+            directory = self._read_directory(offset)
+            self.scan_results.add_directory(directory)
+
+        for line in directs:
+            offset = int(line.strip())
+            direct = self._read_direct(offset)
+            self.scan_results.add_direct(direct)
+
+        #self._find_missing_directs() # I believe I need to do this to link directories to one another?
+        #self._find_missing_inodes() # TODO: Test if this is needed.
 
     def _save_scan_to_files(self, loadpath):
         if not os.path.exists(loadpath + "\\"):
@@ -335,29 +364,23 @@ class Scanner:
             for inode in self.scan_results.inode_map:
                 fp.write(f"{inode}\n")
         with open(loadpath + '\\directs.txt', 'w') as fp:
-            for direct in self.scan_results.directs_list:
+            for direct in self.scan_results.directs_map:
                 fp.write(f"{direct}\n")
         with open(loadpath + '\\directories.txt', 'w') as fp:
             for directory in self.scan_results.directory_map:
                 fp.write(f"{directory}\n")
         Logger.log(f"Saved scan files to: {loadpath}")
 
-    def _extract_directs(self, addr, extract_active=False):
-        result = Directory(addr)
-        started = False
-
-        # Initial buffer
-        self._stream.seek(addr)
-        buf = self._stream.read(self._superblock.bsize)
-
-        offset = 0
-        direct = self._read_direct(buf, offset)
+    def _read_directory(self, directory_offset, start_of_directory=True):
+        directory = Directory(directory_offset)
+        started = not start_of_directory
+        rel_direct_offset = 0
+        direct = self._read_direct(directory_offset)
 
         if not direct:
             return None
 
         while True:
-
             name = direct.get_name()
 
             # Check if we've run into another directory
@@ -365,50 +388,46 @@ class Scanner:
                 if not started and name == '..':
                     started = True
                 elif started and name == '.':
-                    return result
+                    return directory
 
-            absolute_offset = (addr+offset)
+            absolute_offset = (directory_offset+rel_direct_offset)
+
             #if True:
-            if absolute_offset not in self._active_directs and name != "." and name != "..":
+            if absolute_offset not in self._active_directs and name != "." and name != ".." and not self._loaded_from_files:
                 Logger.log(f"Direct found at offset 0x{absolute_offset:X}: {name}")
-            if absolute_offset not in self._active_directs or extract_active:
-                direct.set_name(name)
-                direct.set_offset(addr+offset)
-                result.add_direct(direct)
+            if absolute_offset not in self._active_directs:
+                directory.add_direct(direct)
 
             # We hit the end of a block
-            # Maybe continue reading?
-            if offset >= self._superblock.bsize:
-                Logger.log(f"Log: Hit end of block when parsing direct table at 0x{addr:X}!")
-                return result
+            if rel_direct_offset >= self._superblock.bsize:
+                return directory
 
             expected_length = (8 + direct.namlen)
             if expected_length % 4 == 0:
                 expected_length += 4
             else:
                 expected_length = ((expected_length + 0x3) & 0xFFFFFFFC)
-            expected_end = offset + expected_length
-            direct_end = offset + direct.reclen
+            expected_end = rel_direct_offset + expected_length
+            direct_end = rel_direct_offset + direct.reclen
 
             if (expected_end + 8) >= self._superblock.bsize:
-                Logger.log(f"Log: Hit end of block when parsing direct table at 0x{addr:X}!")
-                return result
-                
-            direct = self._read_direct(buf, expected_end)
+                return directory
+
+            direct = self._read_direct(directory_offset+expected_end)
             if not direct:
                 if (direct_end + 8) >= self._superblock.bsize:
-                    Logger.log(f"Log: Hit end of block when parsing direct table at 0x{addr:X}!")
-                    return result
-                direct = self._read_direct(buf, direct_end)
+                    return directory
+                direct = self._read_direct(directory_offset+direct_end)
                 if not direct:
-                    return result
-                offset = direct_end
+                    return directory
+                rel_direct_offset = direct_end
             else:
-                offset = expected_end
+                rel_direct_offset = expected_end
 
-    def _read_direct(self, buffer, offset):
-        buf = bytearray(buffer[offset:offset+8])
-        direct = self.direct_class.from_buffer(buf)
+    def _read_direct(self, offset):
+        self._stream.seek(offset)
+        buf = self._stream.read(8)
+        direct = self.direct_class.from_buffer(bytearray(buf))
 
         if direct.ino > self._ninodes:
             return None
@@ -425,22 +444,16 @@ class Scanner:
         if direct.type not in (0,1,2,3,4,6,8,10,12,14,0x88): # 0x88 is a weird PS4 thing
             return None
 
-        if len(buffer) < 0x8 + direct.namlen:
-            return None
-
         name = ''
         try:
-            name = buffer[offset+8:offset+8+direct.namlen].decode('utf-8', "ignore")
+            name = self._stream.read(direct.namlen).decode('utf-8', "ignore")
         except:
             return None
 
         direct.set_name(name)
-        self.scan_results.ino_direct_map[direct.ino] = direct
+        direct.set_offset(offset)
         
         return direct
-
-
-
 
 
 
@@ -535,7 +548,7 @@ class UFS2Linker:
     def _create_nodes_from_directs_linked_to_inodes(self):
         Logger.log("UFS2Linker [Step 1/2] |- Creating nodes from recovered directs that have their inodes also recovered")
         nodes = []
-        for direct in self._scan_results.directs_list:
+        for direct in self._scan_results.directs_map.values():
             name = direct.get_name()
             if name == '..' or name == '.':
                 continue
@@ -558,7 +571,7 @@ class UFS2Linker:
     def _create_nodes_from_unclaimed_directs(self):
         Logger.log("UFS2Linker [Step 1/2] |- Creating nodes from directs that have no inode")
         nodes = []
-        for direct in self._scan_results.directs_list:
+        for direct in self._scan_results.directs_map.values():
             if direct.get_offset() in self._claimed_directs:
                 continue
             if direct.get_name() == "." or direct.get_name() == "..":
