@@ -63,10 +63,10 @@ class App(tk.Frame):
 
     def begin_disk_scan(self, path, keyfile=None, is_deep_scan=False):
         # Open the disk
-        self._current_disk = self._open_disk(path, keyfile, is_deep_scan)
+        self._current_disk = self._open_disk(path, keyfile)
 
         # Scan the disks partition
-        scan_results = self.scan_partition(self._current_disk, self._current_partition_name)
+        scan_results = self.scan_partition(self._current_disk, self._current_partition_name, is_deep_scan)
         
         # Create nodes from the scans results
         nodes = self.create_nodes_from_scan_results(self._current_disk, scan_results)
@@ -91,9 +91,7 @@ class App(tk.Frame):
         if keyfile:
             keys = open(keyfile, 'rb').read()
             config.setKeys(keys)
-        else:
-            Logger.log("\nDecrypted drive support is broken currently... \nOpen an encrypted drive with a keyfile")
-        
+  
         disk = disklib.DiskFormatFactory.detect(config)
 
         self._current_diskpath = path
@@ -138,7 +136,7 @@ class App(tk.Frame):
             self._current_partition_name = 'user'
             Logger.log("Set disk type to PS4: Partition user")
 
-    def scan_partition(self, disk, partition_name):
+    def scan_partition(self, disk, partition_name, is_deep_scan):
         scanner = Scanner(disk, partition_name)
         scan_logfile = None
         
@@ -154,7 +152,7 @@ class App(tk.Frame):
             Logger.streams.append(scan_logfile)
 
         # Find deleted inodes and directs
-        scanner.scan(load_path, self._deep_scan)
+        scanner.scan(load_path, is_deep_scan)
 
         # Stop logging for the scan
         if scan_logfile:
@@ -262,8 +260,12 @@ class OpenHDDImageModal(tk.Frame):
     def begin_scan(self):
         path = self.img_path_string.get()
         keyfile = self.eid_path_string.get()
+        if self._default_text_browse_eid in keyfile:
+            keyfile = None
+        if self._default_text_browse_img in path:
+            path = None
         deep_scan = self.deep_scan.get()
-        if path == None or path in self._default_text_browse_img:
+        if path == None:
             return
         self.modal.destroy()
         self.on_scan_initiated(path,keyfile,deep_scan)
