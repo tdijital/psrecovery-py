@@ -232,7 +232,6 @@ class OpenHDDImageModal(tk.Frame):
         eid_browse_btn = Button(self.modal, text="Browse", command=self.open_filedialog_eid).place(x=400,y=40)
         fast_scan = Radiobutton(self.modal, text="Fast Scan*", variable=self.deep_scan, value=False).place(x=10,y=70)
         deep_scan = Radiobutton(self.modal, text="Deep Scan", variable=self.deep_scan, value=True).place(x=100,y=70)
-        help_label = Label(self.modal, text="*Fast scan is much faster and more reliable.", font=("Arial", 8), fg="#AAAAAA", justify=LEFT, anchor="w").place(x=10,y=90,width=450,height=20)
         self.scan_btn = Button(self.modal, text="Scan", command=self.begin_scan, state=DISABLED)
         self.scan_btn.place(x=400,y=120)
 
