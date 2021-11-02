@@ -354,9 +354,6 @@ class Scanner:
             direct = self._read_direct(offset)
             self.scan_results.add_direct(direct)
 
-        #self._find_missing_directs() # I believe I need to do this to link directories to one another?
-        #self._find_missing_inodes() # TODO: Test if this is needed.
-
     def _save_scan_to_files(self, loadpath):
         if not os.path.exists(loadpath + "\\"):
             os.mkdir(loadpath + "\\")
