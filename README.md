@@ -74,7 +74,7 @@ A 0kb file will be written in place of the file.
 __What's the difference between deep scan and fast scan?__
 \
 Deep scan will search every single fragment in the drive for directs and inodes.
-Fast scan only searchs areas defined by the super block that contain inodes and directs.
+Fast scan only searches areas defined by the super block that contain inodes and directs.
 
 __Why would I use deep scan?__
 \
@@ -89,5 +89,5 @@ If the drive has been formatted multiple times sometimes that partition can chan
 - Scan for stray SuperBlocks and CylinderGroups if found use them in relevant directs to calculate ino to offset.
 
 ### Experimental TODO
-- Scan for unclaimed inidrect block tables
+- Scan for unclaimed indirect block tables
   - Try to identify file match for the block table in carved files.
