@@ -11,6 +11,7 @@ from tkinter import Entry, Label, Menu, PhotoImage, Button, Radiobutton, filedia
 from analysis.analyzer import Node, NodeType, Scanner, UFS2Linker
 from analysis.carver import InodeIdentifier
 from analysis.ufs import Endianness, endianness
+import analysis.ufs
 from common.logger import Logger
 from common.event import Event
 
@@ -112,8 +113,6 @@ class App(tk.Frame):
         stream.seek(0x1C)
         magic2 = stream.read(0x4)
 
-        global endianness
-
         disktype = None
 
         if ps3_magic1 == magic1 or ps3_magic2 == magic2:
@@ -126,13 +125,12 @@ class App(tk.Frame):
         return disktype
 
     def set_disktype(self, disktype):
-        global endianness
         if disktype == DiskType.PS3:
-            endianness = Endianness.BIG
+            analysis.ufs.endianness = Endianness.BIG
             self._current_partition_name = 'dev_hdd0'
             Logger.log("Set disk type to PS3: Partition dev_hdd0")
         if disktype == DiskType.PS4:
-            endianness = Endianness.LITTLE
+            analysis.ufs.endianness = Endianness.LITTLE
             self._current_partition_name = 'user'
             Logger.log("Set disk type to PS4: Partition user")
 
