@@ -28,6 +28,8 @@ class FileWriter():
     
     def write_items(self, outpath, items, recursive=True):
         for item in items:
+            if self._fs_tree.parent(item) in items:
+                continue
             node = self._node_item_map[item]
             if node.get_type() is NodeType.DIRECTORY:
                 self.write_item_directory(outpath, item, item, recursive)
