@@ -488,10 +488,12 @@ class RecoveredFilesBrowser(tk.Frame):
         outpath = filedialog.askdirectory()
         if outpath == '':
             return
-        logfile = open(outpath + 'dump-log.txt','w', encoding='utf8')
+        logfile = open(outpath + '\\dump-log.txt','w', encoding='utf8')
         Logger.streams.append(logfile)
+        Logger.log(f"Dumping files to: {outpath} ...")
         filewriter = FileWriter(self._stream, self.fs_tree, self.node_map)
         filewriter.write_items(outpath, self.fs_tree.selection())
+        Logger.log("Dumping completed!")
         Logger.streams.remove(logfile)
         
     def format_bytes(self, filesize):
