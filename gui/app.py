@@ -8,7 +8,8 @@ from tkinter.constants import ANCHOR, BOTH, DISABLED, LEFT, NORMAL
 import tkinter.ttk as ttk
 from tkinter import Entry, Label, Menu, PhotoImage, Button, Radiobutton, filedialog, simpledialog
 
-from analysis.analyzer import Node, NodeType, Scanner, UFS2Linker
+from analysis.analyzer import Scanner, UFS2Linker
+from analysis.node import Node, NodeType, NodeValidator
 from analysis.carver import InodeIdentifier
 from analysis.ufs import Endianness, endianness
 import analysis.ufs
@@ -75,9 +76,12 @@ class App(tk.Frame):
         # Create Stream
         partition = self._current_disk.getPartitionByName(self._current_partition_name)
         stream = partition.getDataProvider()
-
+        
         # Attempt to identify unknown nodes with inodes
         nodes = self.identify_unknown_node_filetypes(stream, nodes)
+
+        # Check validity of nodes
+        self.check_nodes_validity(stream, nodes)
 
         # Show results
         self.display_scan_results_tab(stream, nodes)
@@ -179,6 +183,12 @@ class App(tk.Frame):
 
         Logger.log(f"Identified {identified_count} unknown filetypes!")
         return nodes
+
+    def check_nodes_validity(self, stream, nodes):
+        Logger.log("Checking validity of nodes...")
+        validator = NodeValidator(stream)
+        for node in nodes:
+            validator.validate(node)
 
     def display_scan_results_tab(self, stream, nodes):
         if self._splash:
@@ -383,7 +393,6 @@ class RecoveredFilesBrowser(tk.Frame):
             mtime = node.get_last_modified_time()
             # Icon
             if node.get_type() == NodeType.FILE:
-                #valid = self.check_if_inode_indexes_valid(node)
                 if node.get_inode() and node.get_direct():
                     if node.get_active() is True:
                         icon = self.file_ico
@@ -396,8 +405,8 @@ class RecoveredFilesBrowser(tk.Frame):
                 elif node.get_direct():
                     icon = self.file_direct_ico
                     self.recovered_directs += 1
-                #if not valid:
-                #    icon = self.file_warning_ico
+                if not node.get_valid():
+                    icon = self.file_warning_ico
             else:
                 if node.get_inode() and node.get_direct():
                     if node.get_active() is True:

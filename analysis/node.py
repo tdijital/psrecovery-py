@@ -1,3 +1,5 @@
+import math
+from analysis.ufs import SuperBlock, InodeReader
 
 class NodeType:
     FILE = 0
@@ -24,6 +26,7 @@ class Node:
         self._type = typ
         self._file_ext = None
         self._active = False
+        self._valid = True
 
     def set_active(self, active):
         self._active = active
@@ -90,5 +93,26 @@ class Node:
         self._file_ext = ext
     def get_file_ext(self):
         return self._file_ext
+    def set_valid(self, valid):
+        self._valid = valid
+    def get_valid(self):
+        return self._valid
     def __repr__(self):
         return self.get_name()
+
+
+class NodeValidator():
+    def __init__(self, stream):
+        self._inode_reader = InodeReader(stream)
+        self._superblock = SuperBlock(stream)
+    
+    def validate(self, node):
+        inode = node.get_inode()
+        if not node.get_inode():
+            return
+        block_indexes = self._inode_reader.get_block_indexes(inode)
+        required_blocks = math.ceil(inode.size / self._superblock.bsize)
+        if len(block_indexes) != required_blocks:
+            node.set_valid(False)
+            return False
+        return True
