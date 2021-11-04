@@ -62,6 +62,102 @@ class FileSignature:
         raise NotImplementedError("FileCarver parser not implemented!")
 
 
+class JPEGSignature(FileSignature):
+    def initialization(self):
+        self.extension='.jpeg'
+        
+    def test(self):
+        magic = self.stream.read(3)
+        if magic == 0xFFD8FF:
+            magic2 = self.stream.read(1)
+            if magic2 == 0xDB:
+                return True
+            if magic2 == 0xE0:
+                return True
+            if magic2 == 0xEE:
+                return True
+            if magic2 == 0xE1:
+                return True
+        return False
+
+class AVISignature(FileSignature):
+    def initialization(self):
+        self.extension='.avi'
+        
+    def test(self):
+        magic = self.stream.read(4)
+        if magic == b"RIFF":
+            self.seek(8)
+            magic2 = self.stream.read(4)
+            if magic2 == b"AVI\x20":
+                return True
+        return False
+
+
+class WaveSignature(FileSignature):
+    def initialization(self):
+        self.extension='.wav'
+        
+    def test(self):
+        magic = self.stream.read(4)
+        if magic == b"RIFF":
+            self.seek(8)
+            magic2 = self.stream.read(4)
+            if magic2 == b"WAVE":
+                return True
+        return False
+
+
+class MPEGSignature(FileSignature):
+    def initialization(self):
+        self.extension='.zlib'
+        
+    def test(self):
+        magic = self.stream.read(4)
+        return magic == 0x4C5A4950
+
+
+class LZipSignature(FileSignature):
+    def initialization(self):
+        self.extension='.lz'
+        
+    def test(self):
+        magic = self.stream.read(4)
+        return magic == 0x4C5A4950
+
+
+class ZipSignature(FileSignature):
+    def initialization(self):
+        self.extension='.zip'
+
+    def test(self):
+        magic = self.stream.read(3)
+        return magic == 0x504B03
+
+
+class TarGZSignature(FileSignature):
+    def initialization(self):
+        self.extension='.tar'
+        
+    def test(self):
+        magic = self.stream.read(2)
+        magic1 = 0x1F9D
+        magic2 = 0x1FA0
+        magic3 = 0x1F8B
+        if magic3 == magic:
+            self.extension = '.gz'
+        return magic == magic1 or magic == magic2 or magic == magic3
+
+
+class PKGSignature(FileSignature):
+    def initialization(self):
+        self.extension='.pkg'
+    
+    def test(self):
+        magic = self.stream.read(4)
+        return magic == b"\x7FPKG"
+
+
 class SelfSignature(FileSignature):
     def initialization(self):
         self.extension='.self'
@@ -216,6 +312,7 @@ class FileCarver():
                     tester.parse()
                     self.identified_file_sigs.append(tester)
                     Logger.log(str(tester))
+
 
 class InodeIdentifier():
     def __init__(self, stream):
