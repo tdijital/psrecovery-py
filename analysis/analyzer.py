@@ -298,7 +298,7 @@ class Scanner:
                     directory = self._read_directory(block_offset, False)
                     if directory:
                         if parent_directory:
-                            parent_directory.combine_directories(directory) # NOTE: This maybe isn't needed. UFS2Linker may handle it.
+                            parent_directory.combine_directories(directory)
                         for direct in directory.get_directs():
                             self.scan_results.add_direct(direct)
 
@@ -353,6 +353,9 @@ class Scanner:
             offset = int(line.strip())
             direct = self._read_direct(offset)
             self.scan_results.add_direct(direct)
+
+        # This needs to be called right now to parent directs to directories that extend beyond a block
+        self._find_missing_directs()
 
     def _save_scan_to_files(self, loadpath):
         if not os.path.exists(loadpath + "\\"):
