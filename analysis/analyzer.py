@@ -81,6 +81,7 @@ class ScanResults:
         if direct.get_offset() in self.active_directs:
             return
         self.directs_map[direct.get_offset()] = direct
+        self.ino_direct_map[direct.ino] = direct
 
 
 class Scanner:
@@ -278,7 +279,6 @@ class Scanner:
 
                 bytesLeft -= bufSize
                 offset += bufSize
-
     #
     # TODO: Split this into two functions 
     # 1) Add directs to directories that extend beyond a block 
@@ -308,6 +308,8 @@ class Scanner:
         for direct in self.scan_results.directs_map.values():
             inode_offset = ino_to_offset(self._superblock, direct.ino)
             if inode_offset in self.scan_results.inode_map:
+                continue
+            if inode_offset in self.scan_results.active_inodes:
                 continue
             inode = self._read_inode_at_offset(inode_offset)
             if inode:
