@@ -65,23 +65,22 @@ class ScanResults:
     def add_directory(self, directory):
         self.directory_map[directory.get_offset()] = directory
         for direct in directory.get_directs():
-            if direct.get_name() == "." or direct.get_name() == "..":
-                continue
-            if direct.get_offset() in self.active_directs:
-                continue
-            self.ino_direct_map[direct.ino] = direct
-            self.directs_map[direct.get_offset()] = direct
+            self.add_direct(direct)
 
     def add_inode(self, inode):
         if inode.get_offset() in self.active_inodes:
-            return
+            return False
         self.inode_map[inode.get_offset()] = inode
+        return True
 
     def add_direct(self, direct):
+        if direct.get_name() == "." or direct.get_name() == "..":
+            return False
         if direct.get_offset() in self.active_directs:
-            return
+            return False
         self.directs_map[direct.get_offset()] = direct
         self.ino_direct_map[direct.ino] = direct
+        return True
 
 
 class Scanner:
@@ -216,8 +215,8 @@ class Scanner:
                 # Check if inode
                 inode = self._read_inode_at_offset(inode_offset)
                 if inode:
-                    self.scan_results.add_inode(inode)
-                    Logger.log(f"Deleted inode found at offset: 0x{inode_offset:X}")
+                    if self.scan_results.add_inode(inode):
+                        Logger.log(f"Deleted inode found at offset: 0x{inode_offset:X}")
                         
             if (offset & 0xfffffff) == 0:
                 Logger.log(f"Percent Complete: {round((offset/drive_length)*100,2)}%")
@@ -249,8 +248,8 @@ class Scanner:
                     if inode:
                         # This inode was deleted, so add it to the list
                         inode_index = (cyl * self._superblock.ipg) + i
-                        Logger.log(f"Deleted inode found at index {inode_index}, offset: 0x{inode_offset:X}")
-                        self.scan_results.add_inode(inode)
+                        if self.scan_results.add_inode(inode):
+                            Logger.log(f"Deleted inode found at index {inode_index}, offset: 0x{inode_offset:X}")
             # Get the offset of the data block
             data_start = cyl_offset + data_block_offset
             data_end = data_start + data_block_length
@@ -274,8 +273,7 @@ class Scanner:
                     if test2:
                         # We found a direct table, so lets read out the entire table
                         directory = self._read_directory(offset+block)
-                        if directory:
-                            self.scan_results.add_directory(directory)
+                        self.scan_results.add_directory(directory)
 
                 bytesLeft -= bufSize
                 offset += bufSize
@@ -300,7 +298,8 @@ class Scanner:
                         if parent_directory:
                             parent_directory.combine_directories(directory)
                         for direct in directory.get_directs():
-                            self.scan_results.add_direct(direct)
+                            if self.scan_results.add_direct(direct):
+                                Logger.log(f"Deleted direct found at offset 0x{direct.get_offset():X}: {direct.get_name()}")
 
                     
     def _find_missing_inodes(self):
@@ -313,8 +312,8 @@ class Scanner:
                 continue
             inode = self._read_inode_at_offset(inode_offset)
             if inode:
-                Logger.log(f"Deleted inode found at index unknown, offset: 0x{inode_offset:X}")
-                self.scan_results.add_inode(inode)
+                if self.scan_results.add_inode(inode):
+                    Logger.log(f"Deleted inode found at index unknown, offset: 0x{inode_offset:X}")
 
 
     def _load_from_files(self, loadpath):
@@ -393,12 +392,11 @@ class Scanner:
                     return directory
 
             absolute_offset = (directory_offset+rel_direct_offset)
-
-            #if True:
-            if absolute_offset not in self._active_directs and name != "." and name != ".." and not self._loaded_from_files:
-                Logger.log(f"Direct found at offset 0x{absolute_offset:X}: {name}")
+                
             if absolute_offset not in self._active_directs:
                 directory.add_direct(direct)
+                if not self._loaded_from_files and name != "." and name != "..":
+                    Logger.log(f"Deleted direct found at offset 0x{absolute_offset:X}: {name}")
 
             # We hit the end of a block
             if rel_direct_offset >= self._superblock.bsize:
