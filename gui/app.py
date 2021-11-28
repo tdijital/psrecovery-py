@@ -144,7 +144,7 @@ class App(tk.Frame):
         
         load_path = os.path.normpath(f"{os.getcwd()}\\scans") + "\\" + os.path.basename(self._current_diskpath).split(".")[0]
         load_path = load_path.lower()
-        load_path += "(deep)" if self._deep_scan else "(fast)"
+        load_path += "(deep)" if is_deep_scan else "(fast)"
 
         # If this scan hasn't completed before write a scan-log
         if not os.path.exists(load_path + "\\inodes.txt"):
