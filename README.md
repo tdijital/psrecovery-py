@@ -3,7 +3,7 @@ A prototype to explore different file recovery techniques for the UFS2 filesyste
 
 ## Requirements
 
-- Python 3.9+
+- Python 3.9.x
 
 ## Usage
 
