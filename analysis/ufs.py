@@ -112,8 +112,8 @@ def get_inode_class():
             ("nlink", ctypes.c_uint16),
             ("uid", ctypes.c_uint32),
             ("gid", ctypes.c_uint32),
-            ("blksize", ctypes.c_uint32),
 
+            ("blksize", ctypes.c_uint32),
             ("size", ctypes.c_uint64),
             ("blocks", ctypes.c_uint64),
 
@@ -163,7 +163,7 @@ class InodeReader():
         indexes = []
         for index in inode.db:
             if index == 0 or self._max_bindex < index:
-                break
+                continue
             indexes.append(index)
         
         # Read indirect blocks
@@ -212,5 +212,5 @@ class InodeReader():
     def fill_missing_block_indexes(self, block_indexes, required_blocks):
         missing_index_count = required_blocks - len(block_indexes)
         last_valid_index = block_indexes[-1]
-        for i in missing_index_count:
+        for i in range(missing_index_count):
             block_indexes.append(last_valid_index + (0x4 * i))
