@@ -189,6 +189,8 @@ class App(tk.Frame):
         validator = NodeValidator(stream)
         for node in nodes:
             validator.validate(node)
+            if len(node.get_children()) > 0:
+                self.check_nodes_validity(stream, node.get_children())
 
     def display_scan_results_tab(self, stream, nodes):
         if self._splash:
