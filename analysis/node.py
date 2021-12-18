@@ -27,6 +27,7 @@ class Node:
         self._file_ext = None
         self._active = False
         self._valid = True
+        self._file_offset = None
 
     def set_active(self, active):
         self._active = active
@@ -97,6 +98,10 @@ class Node:
         self._valid = valid
     def get_valid(self):
         return self._valid
+    def set_file_offset(self, offset):
+        self._file_offset = offset
+    def get_file_offset(self):
+        return self._file_offset
     def __repr__(self):
         return self.get_name()
 

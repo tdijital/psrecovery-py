@@ -40,6 +40,7 @@ class FileWriter():
         block_indexes = []
         file_bytes = bytearray()
         node = self._node_item_map[item]
+        node:Node
         inode = node.get_inode()
 
         # If an inode exists read the inodes blocks
@@ -63,6 +64,9 @@ class FileWriter():
                 file_bytes += self._stream.read(read)
                 remaining -= read
                 block_count += 1
+        elif node.get_size() and node.get_file_offset(): # Carved files
+            self._stream.seek(node.get_file_offset())
+            file_bytes = self._stream.read(node.get_size())
         
         # Write the file     
         file_path = f"{outpath}\\{self._fs_tree.item(item)['text']}"
