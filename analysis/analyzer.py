@@ -446,7 +446,7 @@ class Scanner:
 
         name = ''
         try:
-            name = self._stream.read(direct.namlen).decode('utf-8', "ignore")
+            name = self._stream.read(direct.namlen).decode('utf-8', "replace")
         except:
             return None
 

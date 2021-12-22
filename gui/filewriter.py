@@ -64,8 +64,9 @@ class FileWriter():
                 remaining -= read
                 block_count += 1
         
-        # Write the file     
-        file_path = f"{outpath}\\{self._fs_tree.item(item)['text']}"
+        # Write the file
+        file_name = self._replace_invalid_utf8_chars(self._fs_tree.item(item)['text'])
+        file_path = f"{outpath}\\{file_name}"
         file_path = os.path.normpath(file_path)
 
         with open(file_path, 'wb') as f:
@@ -110,3 +111,11 @@ class FileWriter():
         mtime = node.get_last_modified_time()
 
         os.utime(path, (atime, mtime))
+    
+    # Hack-ish: Previously the direct scanner ignored utf-8 errors 
+    # this should make sure only valid utf-8 is written to the file name
+    def _replace_invalid_utf8_chars(self, s):
+        s1 = bytes(s, "utf-8", 'ignore')
+        s1 = s1.decode('utf-8','replace')
+        s1 = s1.replace("\x00", "")
+        return s1
