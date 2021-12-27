@@ -1,12 +1,14 @@
 import math
 import os
 import time
+import threading
 
 import tkinter as tk
 import tkinter
-from tkinter.constants import ANCHOR, BOTH, DISABLED, LEFT, NORMAL
+from tkinter.constants import ANCHOR, BOTH, DISABLED, LEFT, NORMAL, HORIZONTAL, SE, SW, S, N, NE, NW, NSEW
 import tkinter.ttk as ttk
-from tkinter import Entry, Label, Menu, PhotoImage, Button, Radiobutton, filedialog, simpledialog
+from tkinter import Entry, Label, Menu, PhotoImage, Button, Radiobutton, StringVar, OptionMenu, filedialog, simpledialog
+from tkinter.ttk import Progressbar
 
 from analysis.analyzer import Scanner, UFS2Linker
 from analysis.node import Node, NodeType, NodeValidator
@@ -32,6 +34,9 @@ _file_disk_stream = None
 
 class App(tk.Frame):
     def __init__(self, master, path = None, key=None, deep_scan=None):
+        
+        self.metadata_analysis_window:ScanMetaDataWindow = None
+        
         # Tkinter
         tk.Frame.__init__(self, master)
 
@@ -54,16 +59,10 @@ class App(tk.Frame):
         self.file_menu = Menu(self.menubar, tearoff=0)
         self.menubar.add_cascade(label="File", menu=self.file_menu)
 
-        self.file_menu.add_command(label="Open HDD img",command=self.display_open_hdd_img_modal)
-
-        self.scan_menu = Menu(self.menubar, tearoff=0)
-        self.menubar.add_cascade(label="Scan", menu=self.scan_menu)
-
-        #self.scan_menu.add_command(label="Run Metadata Analyzer",command=self.display_open_hdd_img_modal)
-        self.scan_menu.add_command(label="Run File Carver",command=self.begin_file_carver_scan)
+        self.file_menu.add_command(label="Open HDD img",command=self.display_open_hdd_img_window)
 
         if path:
-            self._master.after(100, self.begin_disk_scan, path, key, deep_scan)
+            self._master.after(100, self.begin_disk_scan_metaanalysis, path, key, deep_scan)
 
         self.show_splash()
 
@@ -73,32 +72,11 @@ class App(tk.Frame):
         inner_frame.pack(fill="both", expand=True)
         Label(inner_frame, image=splash_image, background='#1F67F6').pack(fill="both", expand=True)
         self._master.mainloop()
-
-    def begin_disk_scan(self, path, keyfile=None, is_deep_scan=False):
-        # Open the disk
-        self._current_disk = self._open_disk(path, keyfile)
-
-        # Scan the disks partition
-        scan_results = self.scan_partition(self._current_disk, self._current_partition_name, is_deep_scan)
-        
-        # Create nodes from the scans results
-        nodes = self.create_nodes_from_scan_results(self._current_disk, scan_results)
-
-        # Create Stream
-        partition = self._current_disk.getPartitionByName(self._current_partition_name)
-        stream = partition.getDataProvider()
-        
-        # Attempt to identify unknown nodes with inodes
-        nodes = self.identify_unknown_node_filetypes(stream, nodes)
-
-        # Check validity of nodes
-        Logger.log("Checking validity of nodes...")
-        self.check_nodes_validity(stream, nodes)
-
-        # Show results
-        self.display_scan_results_tab(stream, nodes)
-
-    def _open_disk(self, path, keyfile=None, is_deep_scan=False):
+    
+    #
+    # Disk
+    #
+    def _open_disk(self, path, keyfile=None):
         global _file_disk_stream
         _file_disk_stream = disklib.FileDiskStream(path)
         config = disklib.DiskConfig()
@@ -150,7 +128,50 @@ class App(tk.Frame):
             self._current_partition_name = 'user'
             Logger.log("Set disk type to PS4: Partition user")
 
-    def scan_partition(self, disk, partition_name, is_deep_scan):
+    #
+    # Meta Data Analysis
+    #
+    def begin_disk_scan_active_fs(self):
+        # Scan the disks partition
+        scan_results = self.scan_active_fs_on_partition(self._current_disk, self._current_partition_name)
+        
+        # Create nodes from the scans results
+        nodes = self.create_nodes_from_scan_results(self._current_disk, scan_results)
+
+        # Create Stream
+        partition = self._current_disk.getPartitionByName(self._current_partition_name)
+        stream = partition.getDataProvider()
+
+        # Show results
+        self.display_scan_results_tab(stream, nodes)
+    
+    def begin_disk_scan_metaanalysis(self, is_deep_scan=False):
+        # Scan the disks partition
+        scan_results = self.scan_for_deleted_on_partition(self._current_disk, self._current_partition_name, is_deep_scan)
+        
+        # Create nodes from the scans results
+        nodes = self.create_nodes_from_scan_results(self._current_disk, scan_results)
+
+        # Create Stream
+        partition = self._current_disk.getPartitionByName(self._current_partition_name)
+        stream = partition.getDataProvider()
+        
+        # Attempt to identify unknown nodes with inodes
+        nodes = self.identify_unknown_node_filetypes(stream, nodes)
+
+        # Check validity of nodes
+        Logger.log("Checking validity of nodes...")
+        self.check_nodes_validity(stream, nodes)
+
+        # Show results
+        self.display_scan_results_tab(stream, nodes)
+
+    def scan_active_fs_on_partition(self, disk, partition_name):
+        scanner = Scanner(disk, partition_name)
+        scanner.scan_active_filesystem()
+        return scanner.scan_results
+    
+    def scan_for_deleted_on_partition(self, disk, partition_name, is_deep_scan):
         scanner = Scanner(disk, partition_name)
         scan_logfile = None
         
@@ -167,6 +188,7 @@ class App(tk.Frame):
 
         # Find deleted inodes and directs
         scanner.scan(load_path, is_deep_scan)
+        scanner.scan_active_filesystem()
 
         # Stop logging for the scan
         if scan_logfile:
@@ -203,6 +225,25 @@ class App(tk.Frame):
             if len(node.get_children()) > 0:
                 self.check_nodes_validity(stream, node.get_children())
 
+    #
+    # File Carver
+    #
+    def begin_file_carver_scan(self):
+        if self._current_disk is None:
+            Logger.log("Cannot begin file carver no disk has been opened.")
+            return
+        # This scans the whole disk not just the partition
+        stream = self._current_disk.getDataProvider()
+        filecarver = FileCarver(stream)
+        filecarver.scan(stream)
+        nodes =  filecarver.get_nodes()
+        self._carved_file_browser = FileCarverFileBrowser(self._master, stream, nodes)
+        
+        self.pack_notebook()
+
+    #
+    # Display other GUI windows
+    #
     def display_scan_results_tab(self, stream, nodes):
         if self._splash:
             self._splash.pack_forget()
@@ -220,34 +261,84 @@ class App(tk.Frame):
             
             self.pack_notebook()
 
-    def begin_file_carver_scan(self):
-        if self._current_disk is None:
-            Logger.log("Cannot begin file carver no disk has been opened.")
-            return
-        # This scans the whole disk not just the partition
-        stream = self._current_disk.getDataProvider()
-        filecarver = FileCarver(stream)
-        filecarver.scan(stream)
-        nodes =  filecarver.get_nodes()
-        self._carved_file_browser = FileCarverFileBrowser(self._master, stream, nodes)
-        
-        self.pack_notebook()
+    def display_open_hdd_img_window(self):
+        open_image_window = OpenHDDImageWindow()
+        open_image_window.on_open_img += self.on_open_img_clicked
+
+    def display_metadata_analysis_window(self):
+        self.metadata_analysis_window = ScanMetaDataWindow()
 
     def pack_notebook(self):
         self._tab_control.pack_forget()
         if self._recovered_file_browser:
-            self._tab_control.add(self._recovered_file_browser, text="Metadata Analysis")
+            self._tab_control.add(self._recovered_file_browser, text="File Browser")
         if self._carved_file_browser:
-            self._tab_control.add(self._carved_file_browser, text="File Carver Results")
+            self._tab_control.add(self._carved_file_browser, text="File Carver")
         self._tab_control.pack(expand = 1, fill =BOTH)
 
-    def display_open_hdd_img_modal(self):
-        open_image_modal = OpenHDDImageModal()
-        open_image_modal.on_scan_initiated += self.begin_disk_scan
+    #
+    # Events
+    #
+    def on_open_img_clicked(self, path, keyfile):
+        # Open the disk
+        self._current_disk = self._open_disk(path, keyfile)
+
+        self.begin_disk_scan_active_fs()
+
+        # Add the Scan options to the menu
+        self.scan_menu = Menu(self.menubar, tearoff=0)
+        self.menubar.add_cascade(label="Analysis", menu=self.scan_menu)
+
+        self.scan_menu.add_command(label="Metadata Analyzer (Fast)",command=lambda: self.begin_disk_scan_metaanalysis())
+        self.scan_menu.add_command(label="Metadata Analyzer (Deep)",command=lambda: self.begin_disk_scan_metaanalysis(True))
+        self.scan_menu.add_command(label="File Carver",command=self.begin_file_carver_scan)
+
+    def on_scan_clicked(self, is_deep):
+        self.begin_disk_scan_metaanalysis(is_deep)
 
 
+class ScanMetaDataWindow(tk.Frame):
+    def __init__(self):
+        # Init Vars
+        self.scan_options = [
+            "Fast",
+            "Deep"
+        ]
 
-class OpenHDDImageModal(tk.Frame):
+        self.modal = tk.Toplevel()
+        self.on_scan = Event()
+
+        self.scan_type = StringVar()
+        self.scan_type.set( "Fast" )
+
+        # Progress Bar
+        self.progress = Progressbar(self.modal, orient = HORIZONTAL,length = 500, mode = 'determinate')
+        self.progress.pack(padx=10, pady=10)
+        
+        # Create Label
+        label = Label( self.modal , text = " Scan Type:" )
+        label.pack()
+
+        # Create Dropdown menu
+        drop = OptionMenu( self.modal , self.scan_type, *self.scan_options )
+        drop.pack()
+        
+        # Create button, it will change label text
+        button = Button( self.modal , text = "Scan" , command = self.on_scan_clicked )
+        button.place(rely=1.0, relx=1.0, x=-10, y=-10, anchor=SE)
+
+    def update_progress(self, percent):
+        self.progress['value'] = percent
+        self.update_idletasks()
+
+    def on_scan_clicked(self):
+        is_deep = False
+        if self.scan_type.get() == "Deep":
+            is_deep = True
+        self.on_scan(is_deep)
+
+
+class OpenHDDImageWindow(tk.Frame):
     def __init__(self):
         # Init Vars
         self._default_text_browse_img:str = "Browse for HDD img..."
@@ -258,7 +349,7 @@ class OpenHDDImageModal(tk.Frame):
         self.eid_path_string.set(self._default_text_browse_eid)
         self.deep_scan = tk.BooleanVar()
         self.deep_scan.set(False)
-        self.on_scan_initiated = Event()
+        self.on_open_img = Event()
         
         # GUI
         self.modal = tk.Toplevel()
@@ -270,9 +361,9 @@ class OpenHDDImageModal(tk.Frame):
         self.entry_eid_path = Entry(self.modal, textvariable=self.eid_path_string, fg="#AAAAAA")
         self.entry_eid_path.place(x=10,y=40,width=390,height=28)
         eid_browse_btn = Button(self.modal, text="Browse", command=self.open_filedialog_eid).place(x=400,y=40)
-        fast_scan = Radiobutton(self.modal, text="Fast Scan*", variable=self.deep_scan, value=False).place(x=10,y=70)
-        deep_scan = Radiobutton(self.modal, text="Deep Scan", variable=self.deep_scan, value=True).place(x=100,y=70)
-        self.scan_btn = Button(self.modal, text="Scan", command=self.begin_scan, state=DISABLED)
+        #fast_scan = Radiobutton(self.modal, text="Fast Scan*", variable=self.deep_scan, value=False).place(x=10,y=70)
+        #deep_scan = Radiobutton(self.modal, text="Deep Scan", variable=self.deep_scan, value=True).place(x=100,y=70)
+        self.scan_btn = Button(self.modal, text="Open", command=self.begin_scan, state=DISABLED)
         self.scan_btn.place(x=400,y=120)
 
 
@@ -307,4 +398,4 @@ class OpenHDDImageModal(tk.Frame):
         if path == None:
             return
         self.modal.destroy()
-        self.on_scan_initiated(path,keyfile,deep_scan)
+        self.on_open_img(path,keyfile)
