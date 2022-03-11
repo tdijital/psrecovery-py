@@ -147,29 +147,16 @@ class FileBrowser(tk.Frame):
             lbl.grid(row=row, column=0, padx=2)
             entry.grid(row=row, column=1)
 
-        add_attribute_row_item("Filename: ",
-                               self.fs_tree.item(self.item_right_click_on)[
-                                   'text'],
-                               0)
-        add_attribute_row_item("Direct Offset: ",
-                               self.node_map[self.item_right_click_on].get_direct_offset(
-                               ),
-                               1)
-        add_attribute_row_item("Directory Offset: ",
-                               self.node_map[self.item_right_click_on].get_directory_offset(
-                               ),
-                               2)
-        add_attribute_row_item("Inode Offset: ",
-                               self.node_map[self.item_right_click_on].get_inode_offset(
-                               ),
-                               3)
-        add_attribute_row_item("Has Inode: ",
-                               'True' if self.node_map[self.item_right_click_on].get_inode(
-                               ) else 'False',
-                               4)
-        add_attribute_row_item("Node ID: ",
-                               id(self.node_map[self.item_right_click_on]),
-                               5)
+        add_attribute_row_item("Filename: ", self.fs_tree.item(self.item_right_click_on)['text'],0)
+        add_attribute_row_item("Direct Offset: ",self.node_map[self.item_right_click_on].get_direct_offset(),1)
+        add_attribute_row_item("Directory Offset: ", self.node_map[self.item_right_click_on].get_directory_offset(), 2)
+        add_attribute_row_item("Inode Offset: ", self.node_map[self.item_right_click_on].get_inode_offset(), 3)
+        add_attribute_row_item("Has Inode: ", 'True' if self.node_map[self.item_right_click_on].get_inode() else 'False', 4)
+        add_attribute_row_item("Node ID: ", id(self.node_map[self.item_right_click_on]), 5)
+        if self.node_map[self.item_right_click_on].get_inode():
+            # 0x800 is a hardcoded fragment size
+            add_attribute_row_item("First DB Offset: ", id(self.node_map[self.item_right_click_on].get_file_offset()), 6)
+
 
     def recover_selected_files(self):
         outpath = filedialog.askdirectory()
@@ -357,7 +344,12 @@ class FileCarverFileBrowser(FileBrowser):
             node: Node
             size = node.get_size()
             icon = self.file_recovered_ico if size else self.file_ico
-            name = f"File{node.get_file_offset():X}{node.get_file_ext()}"
+            if node.get_name() == None:
+                name = f"File{node.get_file_offset():X}"
+            else:
+                name = node.get_name()
+            if node.get_file_ext() != None:
+                name += node.get_file_ext()
             # Tree Item
             item = self.fs_tree.insert(parent, tk.END, text=name, 
             values=(
@@ -365,3 +357,55 @@ class FileCarverFileBrowser(FileBrowser):
                 f'0x{node.get_file_offset():X}',
             ), image=icon)
             self.node_map[item] = node
+
+
+class UnrealFileBrowser(FileBrowser):
+    def __init__(self, root, stream, nodes):
+        super().__init__(root, stream, nodes)
+
+    def _create_treeview(self):
+        tree_columns = ('filesize', 'fileoffset')
+        self.fs_tree = ttk.Treeview(self, columns=tree_columns)
+        self.fs_tree.heading('#0', text='Contents', anchor='w')
+        self.fs_tree.heading('filesize', text='File Size', anchor="w")
+        self.fs_tree.heading('fileoffset', text='File Offset', anchor="w")
+    
+    def _process_nodes(self, nodes, parent=None):
+        if parent == None:
+            parent = self.fs_tree.insert('', tk.END, text='Unreal', image=self.folder_direct_ref_ico)
+        for node in nodes:
+            node: Node
+            size = node.get_size()
+
+            # Icon
+            if node.get_type() == NodeType.FILE:
+                if node.get_file_offset():
+                    icon = self.file_inode_ico
+                else:
+                    icon = self.file_direct_ico
+            else:
+                icon = self.folder_ico
+
+            # Naming
+            file_offset = None
+            if node.get_file_offset():
+                file_offset = f'0x{node.get_file_offset():X}'
+            else:
+                file_offset = 'Unknown'
+            if node.get_name() == None:
+                name = f"File{node.get_file_offset():X}"
+            else:
+                name = node.get_name()
+            if node.get_file_ext() != None:
+                name += node.get_file_ext()
+            # Tree Item
+            item = self.fs_tree.insert(parent, tk.END, text=name, 
+            values=(
+                f'{self.format_bytes(size):<10} ({size} bytes)' if size else '', 
+                file_offset,
+            ), image=icon)
+            self.node_map[item] = node
+
+            # Process children nodes
+            if node.get_type() == NodeType.DIRECTORY:
+                self._process_nodes(node.get_children(), item)

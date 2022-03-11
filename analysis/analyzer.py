@@ -487,6 +487,7 @@ class UFS2Linker:
         partition = disk.getPartitionByName(self._scan_results.partition_name)
         self._stream = partition.getDataProvider()
         self._inode_reader = InodeReader(self._stream)
+        self._superblock = SuperBlock(self._stream)
 
         self._claimed_directories = {}
         self._claimed_inodes = {}
@@ -534,9 +535,10 @@ class UFS2Linker:
                 _inode_offset = ino_to_offset(self._scan_results.superblock, direct.ino)
             _node = self._add_direct_to_node(_node, direct)
         
-        if inode is None and direct is None and _inode_offset is not None:
+        if inode is None and direct is None:
             _node = Node(NodeType.DIRECTORY)
-            _node.set_inode_offset(_inode_offset)
+            if _inode_offset is not None:
+                _node.set_inode_offset(_inode_offset)
     
         # Mapping
         if inode:
@@ -562,19 +564,26 @@ class UFS2Linker:
                 self._directory_node_map[first_data_block_offset] = node  
             else:
                 node = Node(NodeType.FILE)
-        if node.get_type() is not NodeType.DIRECTORY and inode_is_directory(inode):
-            Logger.log(f"WTF?! The node {node.get_name()} is not a directory but the inode says it should be!")
+        else:
+            if not self.node_direct_type_match(node, inode):
+                return node
+
         node.set_inode(inode)
+        node.set_file_offset(inode.db[0] * self._superblock.fsize)
         if inode.get_offset() in self._scan_results.active_inodes:
             node.set_active(True)
         return node
 
     def _add_direct_to_node(self, node, direct):
         if not node:
-            if direct.type == 0x4 or direct.get_name() == '___LOCK' or '#' in direct.get_name():
+            if direct.type == 0x4:
                 node = Node(NodeType.DIRECTORY)
             else:
                 node = Node(NodeType.FILE)
+        else:
+            if not self.node_direct_type_match(node, direct):
+                return node
+
         if direct.get_offset() in self._scan_results.active_directs:
             node.set_active(True)
         _inode_offset = ino_to_offset(self._scan_results.superblock, direct.ino)
@@ -587,6 +596,22 @@ class UFS2Linker:
         if direct.get_offset() == None:
             Logger.log("WTF?!")
         return node
+
+    def node_inode_type_match(self, node, inode):
+        isDir = inode_is_directory(inode)
+        if isDir and node.get_type() == NodeType.DIRECTORY:
+            return True
+        if not isDir and node.get_type() == NodeType.FILE:
+            return True
+        return False
+    
+    def node_direct_type_match(self, node, direct):
+        isDir = direct.type == 0x4
+        if isDir and node.get_type() == NodeType.DIRECTORY:
+            return True
+        if not isDir and node.get_type() == NodeType.FILE:
+            return True
+        return False
 
     #
     # Step 1 : Create all nodes

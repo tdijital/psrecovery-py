@@ -8,6 +8,56 @@ from analysis.node import Node, NodeType
 import tkinter.ttk as ttk
 
 
+class FileReader():
+    def __init__(self, stream):
+        self._stream = stream
+        self._superblock = SuperBlock(self._stream)
+        self._max_bindex = stream.getLength() / self._superblock.fsize
+        self._inode_reader = InodeReader(stream)
+
+    def get_node_bytes(self, node):
+        inode = node.get_inode()
+        node_bytes = bytearray()
+        
+        # If an inode exists read the inodes blocks
+        if inode is not None:
+            # Read direct blocks
+            block_indexes = self._inode_reader.get_block_indexes(inode)
+            # Read data
+            remaining = node.get_size()
+            required_blocks = math.ceil(remaining / self._superblock.bsize)
+            total_blocks = len(block_indexes)
+            if required_blocks != total_blocks:
+                Logger.log(f"+ File {node.get_name()} is missing {required_blocks-total_blocks} block indexes of total {required_blocks}")
+                Logger.log(f"|- Attempting to fill missing data blocks beginning at 0x{total_blocks * self._superblock.fsize:X}")
+                self._inode_reader.fill_missing_block_indexes(block_indexes, required_blocks)
+            block_count = 0
+            while remaining > 0:
+                index = block_indexes[block_count]
+                data_offset = index * self._superblock.fsize
+                self._stream.seek(data_offset)
+                read = min(remaining, self._superblock.bsize)
+                file_bytes = self._stream.read(read)
+                node_bytes += file_bytes
+                block_count += 1
+                remaining -= read
+        
+        # Carved files
+        elif node.get_size() and node.get_file_offset(): 
+            self._stream.seek(node.get_file_offset())
+            remaining = node.get_size()
+            while remaining > 0:
+                read_offset = node.get_file_offset() + (node.get_size() - remaining)
+                self._stream.seek(read_offset)
+                read = min(remaining, self._superblock.bsize)
+                file_bytes = self._stream.read(read)
+                node_bytes += file_bytes
+                remaining -= read
+            
+        return node_bytes
+
+
+
 class FileWriter():
     def __init__(self, stream, fs_tree, node_item_map):
         self._stream = stream
@@ -43,6 +93,10 @@ class FileWriter():
         node:Node
         inode = node.get_inode()
 
+        # Write the file     
+        file_path = f"{outpath}\\{self._fs_tree.item(item)['text']}"
+        file_path = os.path.normpath(file_path)
+
         # If an inode exists read the inodes blocks
         if inode is not None:
             # Read direct blocks
@@ -56,25 +110,38 @@ class FileWriter():
                 Logger.log(f"|- Attempting to fill missing data blocks beginning at 0x{total_blocks * self._superblock.fsize:X}")
                 self._inode_reader.fill_missing_block_indexes(block_indexes, required_blocks)
             block_count = 0
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            file = open(file_path, 'ab')
             while remaining > 0:
                 index = block_indexes[block_count]
                 data_offset = index * self._superblock.fsize
                 self._stream.seek(data_offset)
                 read = min(remaining, self._superblock.bsize)
-                file_bytes += self._stream.read(read)
-                remaining -= read
+                file_bytes = self._stream.read(read)
+                file.write(file_bytes)
                 block_count += 1
-        elif node.get_size() and node.get_file_offset(): # Carved files
+                remaining -= read
+            file.close()
+        
+        # Carved files
+        elif node.get_size() and node.get_file_offset(): 
             self._stream.seek(node.get_file_offset())
-            file_bytes = self._stream.read(node.get_size())
+            remaining = node.get_size()
+            read_buffer_max = 0x80000
+            if os.path.exists(file_path):
+                os.remove(file_path)
+            file = open(file_path, 'ab')
+            while remaining > 0:
+                read_offset = node.get_file_offset() + (node.get_size() - remaining)
+                self._stream.seek(read_offset)
+                read = min(remaining, read_buffer_max)
+                file_bytes = self._stream.read(read)
+                file.write(file_bytes)
+                remaining -= read
+            file.close()
         
-        # Write the file     
-        file_path = f"{outpath}\\{self._fs_tree.item(item)['text']}"
-        file_path = os.path.normpath(file_path)
-
-        with open(file_path, 'wb') as f:
-            f.write(file_bytes)
-        
+        # Set the time stamp
         if inode is not None:
             self.set_file_ts(file_path, node)
 

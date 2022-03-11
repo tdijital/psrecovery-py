@@ -12,8 +12,9 @@ from tkinter.ttk import Progressbar
 
 from analysis.analyzer import Scanner, UFS2Linker
 from analysis.node import Node, NodeType, NodeValidator
-from analysis.carver import FileCarver, InodeIdentifier
+from analysis.carver import FileCarverScanner, InodeIdentifier
 from analysis.ufs import Endianness, endianness
+from analysis.unreal import UnrealAnalyzer
 import analysis.ufs
 from common.logger import Logger
 from common.event import Event
@@ -21,7 +22,7 @@ from common.event import Event
 import disklib
 from gui.filewriter import FileWriter
 
-from gui.filebrowser import FileBrowser, FileCarverFileBrowser, MetaAnalysisFileBrowser
+from gui.filebrowser import FileBrowser, FileCarverFileBrowser, MetaAnalysisFileBrowser, UnrealFileBrowser
 
 
 class DiskType():
@@ -43,6 +44,7 @@ class App(tk.Frame):
         self._master = master
         self._recovered_file_browser = None
         self._carved_file_browser = None
+        self._unreal_analyzer_browser = None
         self._splash = None
         self._tab_control = ttk.Notebook(self._master)
 
@@ -60,6 +62,9 @@ class App(tk.Frame):
         self.menubar.add_cascade(label="File", menu=self.file_menu)
 
         self.file_menu.add_command(label="Open HDD img",command=self.display_open_hdd_img_window)
+
+        self.scan_menu = None
+        self.analysis_menu = None
 
         if path:
             self._master.after(100, self.begin_disk_scan_metaanalysis, path, key, deep_scan)
@@ -128,6 +133,11 @@ class App(tk.Frame):
             self._current_partition_name = 'user'
             Logger.log("Set disk type to PS4: Partition user")
 
+    def get_loadpath(self):
+        load_path = os.path.normpath(f"{os.getcwd()}\\scans") + "\\" + os.path.basename(self._current_diskpath).split(".")[0]
+        load_path = load_path.lower()
+        return load_path
+
     #
     # Meta Data Analysis
     #
@@ -175,19 +185,19 @@ class App(tk.Frame):
         scanner = Scanner(disk, partition_name)
         scan_logfile = None
         
-        load_path = os.path.normpath(f"{os.getcwd()}\\scans") + "\\" + os.path.basename(self._current_diskpath).split(".")[0]
-        load_path = load_path.lower()
-        load_path += "(deep)" if is_deep_scan else "(fast)"
+        load_path = self.get_loadpath()
+        load_path_meta_analysis = self.get_loadpath()
+        load_path_meta_analysis += "\\deep_scan" if is_deep_scan else "\\fast_scan"
 
         # If this scan hasn't completed before write a scan-log
-        if not os.path.exists(load_path + "\\inodes.txt"):
-            if not os.path.exists(load_path):
-                os.makedirs(load_path)
+        if not os.path.exists(load_path_meta_analysis + "\\inodes.txt"):
+            if not os.path.exists(load_path_meta_analysis):
+                os.makedirs(load_path_meta_analysis)
             scan_logfile = open(load_path + '\\scan-log.txt','w', encoding='utf8')
             Logger.streams.append(scan_logfile)
 
         # Find deleted inodes and directs
-        scanner.scan(load_path, is_deep_scan)
+        scanner.scan(load_path_meta_analysis, is_deep_scan)
         scanner.scan_active_filesystem()
 
         # Stop logging for the scan
@@ -233,13 +243,69 @@ class App(tk.Frame):
             Logger.log("Cannot begin file carver no disk has been opened.")
             return
         # This scans the whole disk not just the partition
-        stream = self._current_disk.getDataProvider()
-        filecarver = FileCarver(stream)
-        filecarver.scan(stream)
+        # stream = self._current_disk.getDataProvider()
+
+        # This scans just the partition
+        partition = self._current_disk.getPartitionByName(self._current_partition_name)
+        stream = partition.getDataProvider()
+
+        loadpath = self.get_loadpath() + "\\file_carver"
+        if not os.path.exists(loadpath):
+            os.makedirs(loadpath)
+        scan_logfile = open(loadpath + '\\filecarver-log.txt','w', encoding='utf8')
+        Logger.streams.append(scan_logfile)
+
+        filecarver = FileCarverScanner(stream)
+        filecarver.scan(stream, loadpath)
+
+        Logger.remove_stream(scan_logfile)
+
         nodes =  filecarver.get_nodes()
         self._carved_file_browser = FileCarverFileBrowser(self._master, stream, nodes)
         
-        self.pack_notebook()
+        self.update_gui()
+
+    #
+    # Unreal Analyzer
+    #
+    def begin_unreal_analysis(self):
+        if self._current_disk is None:
+            Logger.log("Cannot begin file carver no disk has been opened.")
+            return
+        # This scans the whole disk not just the partition
+        # stream = self._current_disk.getDataProvider()
+
+        # This scans just the partition
+        partition = self._current_disk.getPartitionByName(self._current_partition_name)
+        stream = partition.getDataProvider()
+
+        # loadpath = self.get_loadpath() + "\\file_carver"
+        # if not os.path.exists(loadpath):
+        #     os.makedirs(loadpath)
+        # scan_logfile = open(loadpath + '\\filecarver-log.txt','w', encoding='utf8')
+        # Logger.streams.append(scan_logfile)
+
+        analyze_nodes = []
+
+        if self._carved_file_browser:
+            for value in self._carved_file_browser.node_map.values():
+                analyze_nodes.append(value)
+
+        if self._recovered_file_browser:
+            for value in self._recovered_file_browser.node_map.values():
+                analyze_nodes.append(value)
+
+        if not self._recovered_file_browser and not self._carved_file_browser:
+            Logger.log("There are no recovered files to attempt to anlyze. Run the meta data analysis, file carver or both before attempting the Unreal Analysis.")
+            return
+        
+        unrealanalyzer = UnrealAnalyzer(analyze_nodes, stream)
+        unrealanalyzer.search_for_file_matches()
+
+        nodes =  unrealanalyzer.get_root_unodes()
+        self._unreal_analyzer_browser = UnrealFileBrowser(self._master, stream, nodes)
+        
+        self.update_gui()
 
     #
     # Display other GUI windows
@@ -259,7 +325,7 @@ class App(tk.Frame):
             # Create frame for viewing the scan results
             self._recovered_file_browser = MetaAnalysisFileBrowser(self._master, stream, nodes)
             
-            self.pack_notebook()
+            self.update_gui()
 
     def display_open_hdd_img_window(self):
         open_image_window = OpenHDDImageWindow()
@@ -268,13 +334,30 @@ class App(tk.Frame):
     def display_metadata_analysis_window(self):
         self.metadata_analysis_window = ScanMetaDataWindow()
 
-    def pack_notebook(self):
+    def update_gui(self):
         self._tab_control.pack_forget()
         if self._recovered_file_browser:
             self._tab_control.add(self._recovered_file_browser, text="File Browser")
         if self._carved_file_browser:
             self._tab_control.add(self._carved_file_browser, text="File Carver")
+        if self._unreal_analyzer_browser:
+            self._tab_control.add(self._unreal_analyzer_browser, text="Unreal Games")
         self._tab_control.pack(expand = 1, fill =BOTH)
+
+        if self.scan_menu == None:
+            self.scan_menu = Menu(self.menubar, tearoff=0)
+            self.menubar.add_cascade(label="Scan", menu=self.scan_menu)
+
+            self.scan_menu.add_command(label="UFS2 Metadata Scan (Fast)",command=lambda: self.begin_disk_scan_metaanalysis())
+            self.scan_menu.add_command(label="UFS2 Metadata Scan (Deep)",command=lambda: self.begin_disk_scan_metaanalysis(True))
+            self.scan_menu.add_command(label="File Carver",command=self.begin_file_carver_scan)
+
+        if self.analysis_menu == None:
+            self.analysis_menu = Menu(self.menubar, tearoff=0)
+            self.menubar.add_cascade(label="Analysis", menu=self.analysis_menu)
+
+            self.analysis_menu.add_command(label="Unreal Engine 3 Analyzer",command=lambda: self.begin_unreal_analysis())
+
 
     #
     # Events
@@ -285,13 +368,9 @@ class App(tk.Frame):
 
         self.begin_disk_scan_active_fs()
 
-        # Add the Scan options to the menu
-        self.scan_menu = Menu(self.menubar, tearoff=0)
-        self.menubar.add_cascade(label="Analysis", menu=self.scan_menu)
+        # Add the Scan options to the menu once a drive is opened
 
-        self.scan_menu.add_command(label="Metadata Analyzer (Fast)",command=lambda: self.begin_disk_scan_metaanalysis())
-        self.scan_menu.add_command(label="Metadata Analyzer (Deep)",command=lambda: self.begin_disk_scan_metaanalysis(True))
-        self.scan_menu.add_command(label="File Carver",command=self.begin_file_carver_scan)
+        
 
     def on_scan_clicked(self, is_deep):
         self.begin_disk_scan_metaanalysis(is_deep)

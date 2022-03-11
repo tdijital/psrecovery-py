@@ -69,11 +69,12 @@ class Node:
         return self._directory_offset
     def set_inode(self, inode):
         self._inode = inode
-        self.set_inode_offset(inode.get_offset())
-        self.set_size(inode.size)
-        self.set_creation_time(inode.ctime)
-        self.set_last_access_time(inode.atime)
-        self.set_last_modified_time(inode.mtime)
+        if inode:
+            self.set_inode_offset(inode.get_offset())
+            self.set_size(inode.size)
+            self.set_creation_time(inode.ctime)
+            self.set_last_access_time(inode.atime)
+            self.set_last_modified_time(inode.mtime)
     def get_inode(self):
         return self._inode
     def set_inode_offset(self, offset):
