@@ -123,7 +123,7 @@ class FileWriter():
                 block_count += 1
                 remaining -= read
             file.close()
-        
+       
         # Carved files
         elif node.get_size() and node.get_file_offset(): 
             self._stream.seek(node.get_file_offset())
@@ -181,3 +181,11 @@ class FileWriter():
         mtime = node.get_last_modified_time()
 
         os.utime(path, (atime, mtime))
+    
+    # Hack-ish: Previously the direct scanner ignored utf-8 errors 
+    # this should make sure only valid utf-8 is written to the file name
+    def _replace_invalid_utf8_chars(self, s):
+        s1 = bytes(s, "utf-8", 'ignore')
+        s1 = s1.decode('utf-8','replace')
+        s1 = s1.replace("\x00", "")
+        return s1
