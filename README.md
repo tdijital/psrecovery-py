@@ -3,18 +3,20 @@ A prototype to explore different file recovery techniques for the UFS2 filesyste
 
 ## Requirements
 
-- Python 3.9.x
+- Python 3.10.0
+
+_The disklib.cp310-win_amd64.pyd is very picky about which python version is used. You can compile a new pyd from [PS-HDD-Tools](https://github.com/aerosoul94/PS-HDD-Tools) if you want to support other python versions. Make sure the python you are calling has its path set to the 3.10.0 install. You check which version yours points to with `python -V`_
 
 ## Usage
 
 To open the app GUI:
-`py main.py`
+`python main.py`
 
 To open the app and begin scanning with CLI on a *DECRYPTED* hdd image:
-`py main.py <hdd img> [args]`
+`python main.py <hdd img> [args]`
 
 To open the app and begin scanning with CLI on an *ENCRYPTED* hdd image:
-`py main.py <hdd img> <key file> [args]`
+`python main.py <hdd img> <key file> [args]`
 
 Pass the argument `--deep-scan` to do a deep scan, by default the fast scan will be run.
 
@@ -28,8 +30,9 @@ Pass the argument `--deep-scan` to do a deep scan, by default the fast scan will
 
 __Do I have to scan a hdd img everytime I open one?__
 \
-If the hdd img has been scanned before it will save the scan results to the `/scans` directory in the same folder as main.py. Each hdd img scan results will be put into a folder named in this schema `<hdd img file name><(fast)||(deep)>`. If psrecovery-py detects a folder fitting the schema with scan results for an img it will load from the saved files, otherwise it will begin a new scan. Scan results are only saved once the entire scan is completed.
-
+If the hdd img has been scanned before it will save the scan results to the `/scans` directory in the same folder as main.py. Each hdd img scan results will be put into a folder named after the name of the hdd img. So if your img is called `myps3.img` you will find the scan results in `/scans/myps3/`
+\
+\
 __How does this work? Magic??__
 \
 Yes.
@@ -81,13 +84,17 @@ __Why would I use deep scan?__
 If the drive has been formatted multiple times sometimes that partition can change where it stores its inodes and directs, the fast scan would miss these if they aren't where it expects. __Deep scan has a potential to return false positives.__
 
 ## TODO
-- Check for collisions between files
-- Show active filesystem in results
-- Better filtering of the scan results
-- Implement FileCarver
-- Use Unreal TOC files to identify unknown Inodes (and carved files when implemented)
+- Check for collisions between files.
+- Better filtering of the scan results.
 - Scan for stray SuperBlocks and CylinderGroups if found use them in relevant directs to calculate ino to offset.
+- Allow the user to select what file types they want to scan for in the FileCarver.
+- Dynamically get partitions and partition names using disklib.
+- Finish the Unreal Scanner
+
+### Unreal Analyzer TODO
+- Attempt to match files in an Unreal TOC by filesize and location on disk for TOCs with no md5s.
+- Attempt to match orphaned blocktables to files in an Unreal TOC by filesize and location on disk.
 
 ### Experimental TODO
-- Scan for unclaimed indirect block tables
+- Scan for unclaimed indirect block tables.
   - Try to identify file match for the block table in carved files.

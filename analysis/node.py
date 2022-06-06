@@ -27,6 +27,7 @@ class Node:
         self._file_ext = None
         self._active = False
         self._valid = True
+        self._file_offset = None
 
     def set_active(self, active):
         self._active = active
@@ -68,11 +69,12 @@ class Node:
         return self._directory_offset
     def set_inode(self, inode):
         self._inode = inode
-        self.set_inode_offset(inode.get_offset())
-        self.set_size(inode.size)
-        self.set_creation_time(inode.ctime)
-        self.set_last_access_time(inode.atime)
-        self.set_last_modified_time(inode.mtime)
+        if inode:
+            self.set_inode_offset(inode.get_offset())
+            self.set_size(inode.size)
+            self.set_creation_time(inode.ctime)
+            self.set_last_access_time(inode.atime)
+            self.set_last_modified_time(inode.mtime)
     def get_inode(self):
         return self._inode
     def set_inode_offset(self, offset):
@@ -97,6 +99,10 @@ class Node:
         self._valid = valid
     def get_valid(self):
         return self._valid
+    def set_file_offset(self, offset):
+        self._file_offset = offset
+    def get_file_offset(self):
+        return self._file_offset
     def __repr__(self):
         return self.get_name()
 

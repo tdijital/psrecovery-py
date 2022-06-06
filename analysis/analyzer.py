@@ -68,15 +68,11 @@ class ScanResults:
             self.add_direct(direct)
 
     def add_inode(self, inode):
-        if inode.get_offset() in self.active_inodes:
-            return False
         self.inode_map[inode.get_offset()] = inode
         return True
 
     def add_direct(self, direct):
         if direct.get_name() == "." or direct.get_name() == "..":
-            return False
-        if direct.get_offset() in self.active_directs:
             return False
         self.directs_map[direct.get_offset()] = direct
         self.ino_direct_map[direct.ino] = direct
@@ -111,6 +107,8 @@ class Scanner:
         self.max_block_index = self._stream.getLength() / self._superblock.fsize
         self.inode_class = get_inode_class()
         self.direct_class = get_direct_class()
+
+        self.scan_results = ScanResults(self._superblock, self._partition_name, self._active_directs, self._active_inodes)
     
     def _get_all_offsets(self, root, key):
         """Get all tables from a directory"""
@@ -168,8 +166,34 @@ class Scanner:
             return None
         return inode
 
-    def scan(self, loadpath, deep_scan=False):
+    def scan_active_filesystem(self):
+        inodes = self._get_active_inodes()
+        for inode in inodes:
+            self.scan_results.add_inode(inode)
+            if inode_is_directory(inode):
+                directory = None
+                for i in range(len(inode.db)):
+                    if inode.db[i] == 0:
+                        break
+                    offset = inode.db[i] * self._superblock.fsize
+                    if i == 0:
+                        directory = self._read_directory(offset, True, False)
+                    else:
+                        directory2 = self._read_directory(offset, False, False)
+                        directory.combine_directories(directory2)
+                self.scan_results.add_directory(directory)
 
+    def _get_active_inodes(self):
+        inodes = []
+        for offset in self._active_inodes:
+            self._stream.seek(offset)
+            data = self._stream.read(0x100)
+            inode = self.inode_class.from_buffer(bytearray(data))
+            inode.set_offset(offset)
+            inodes.append(inode)
+        return inodes
+    
+    def scan(self, loadpath, deep_scan=False):
         if os.path.exists(loadpath + '\\inodes.txt') and os.path.exists(loadpath + '\\directories.txt') and os.path.exists(loadpath + '\\directs.txt'):
             self._loaded_from_files = True
             self._load_from_files(loadpath)
@@ -196,7 +220,6 @@ class Scanner:
 
     
     def _deep_scan(self):
-        self.scan_results = ScanResults(self._superblock, self._partition_name, self._active_directs, self._active_inodes)
         drive_length = self._stream.getLength()
         for offset in range(0, drive_length, self._superblock.fsize):
             self._stream.seek(offset)
@@ -226,8 +249,6 @@ class Scanner:
         data_block_offset = self._superblock.dblkno * self._superblock.fsize
         cgsize = self._superblock.fpg * self._superblock.fsize
         data_block_length = (cgsize - data_block_offset) + 0x14000
-
-        self.scan_results = ScanResults(self._superblock, self._partition_name, self._active_directs, self._active_inodes)
 
         for cyl in range(self._superblock.ncg):
             cyl_offset = (self._superblock.fpg * self._superblock.fsize) * cyl
@@ -322,7 +343,6 @@ class Scanner:
         # We just load each offset, then go to the offset in the disk and read the structures
         # into the inodes_found and directs_found variables
         Logger.log(f"Loading from files at: {loadpath}")
-        self.scan_results = ScanResults(self._superblock, self._partition_name, self._active_directs, self._active_inodes)
         inodes_list = []
         with open(loadpath + '\\inodes.txt', 'r') as fp:
             inodes_list = fp.readlines()
@@ -372,7 +392,7 @@ class Scanner:
                 fp.write(f"{directory}\n")
         Logger.log(f"Saved scan files to: {loadpath}")
 
-    def _read_directory(self, directory_offset, start_of_directory=True):
+    def _read_directory(self, directory_offset, start_of_directory=True, skip_active=True):
         directory = Directory(directory_offset)
         started = not start_of_directory
         rel_direct_offset = 0
@@ -392,7 +412,10 @@ class Scanner:
                     return directory
 
             absolute_offset = (directory_offset+rel_direct_offset)
-                
+
+            if not skip_active:
+                directory.add_direct(direct)
+
             if absolute_offset not in self._active_directs:
                 directory.add_direct(direct)
                 if not self._loaded_from_files and name != "." and name != "..":
@@ -464,6 +487,7 @@ class UFS2Linker:
         partition = disk.getPartitionByName(self._scan_results.partition_name)
         self._stream = partition.getDataProvider()
         self._inode_reader = InodeReader(self._stream)
+        self._superblock = SuperBlock(self._stream)
 
         self._claimed_directories = {}
         self._claimed_inodes = {}
@@ -492,41 +516,30 @@ class UFS2Linker:
     def _create_node(self, direct, inode, inode_offset=None):
         _inode_offset = inode_offset
         _node = None
-
-        if direct:
-            if not _node:
-                if direct.type == 0x4 or direct.get_name() == '___LOCK' or '#' in direct.get_name():
-                    _node = Node(NodeType.DIRECTORY)
-                else:
-                    _node = Node(NodeType.FILE)
-            #if direct.get_offset() in self._active_directs:
-            #    node.set_active(True)
-            _inode_offset = ino_to_offset(self._scan_results.superblock, direct.ino)
-            _node.set_direct(direct)
-            _node.set_direct_offset(direct.get_offset())
-            _node.set_inode_offset(_inode_offset)
-            _node.set_name(direct.get_name())
-            if direct.get_offset() == None:
-                Logger.log("WTF?!")
         
         if inode:
             _inode_offset = inode.get_offset()
-            first_data_block_offset = inode.db[0] * self._scan_results.superblock.fsize
-            if not _node:
-                if inode_is_directory(inode):
-                    _node = Node(NodeType.DIRECTORY)
-                    _node.set_directory_offset(first_data_block_offset)
-                    self._directory_node_map[first_data_block_offset] = _node  
+            if direct:
+                if direct.get_offset() not in self._scan_results.active_directs and _inode_offset in self._scan_results.active_inodes:
+                    # don't associate the two if the direct is deleted but the inode is active
+                    pass
                 else:
-                    _node = Node(NodeType.FILE)
-            if _node.get_type() is not NodeType.DIRECTORY and inode_is_directory(inode):
-                Logger.log(f"WTF?! The node {_node.get_name()} is not a directory but the inode says it should be!")
-            _node.set_inode(inode)
-        
-        if inode is None and direct is None and _inode_offset is not None:
-            _node = Node(NodeType.DIRECTORY)
-            _node.set_inode_offset(_inode_offset)
+                    # only associate the inode and direct if they are both deleted or both active
+                    _node = self._add_inode_to_node(_node, inode)
+            else:
+                _node = self._add_inode_to_node(_node, inode)
 
+        if direct:
+            if not inode:
+                # if there's no inode use the directs ino to determine what the _inode_offset should be
+                _inode_offset = ino_to_offset(self._scan_results.superblock, direct.ino)
+            _node = self._add_direct_to_node(_node, direct)
+        
+        if inode is None and direct is None:
+            _node = Node(NodeType.DIRECTORY)
+            if _inode_offset is not None:
+                _node.set_inode_offset(_inode_offset)
+    
         # Mapping
         if inode:
             self._claimed_inodes[inode.get_offset()] = inode
@@ -542,8 +555,66 @@ class UFS2Linker:
 
         return _node or None
 
+    def _add_inode_to_node(self, node, inode):
+        first_data_block_offset = inode.db[0] * self._scan_results.superblock.fsize
+        if not node:
+            if inode_is_directory(inode):
+                node = Node(NodeType.DIRECTORY)
+                node.set_directory_offset(first_data_block_offset)
+                self._directory_node_map[first_data_block_offset] = node  
+            else:
+                node = Node(NodeType.FILE)
+        else:
+            if not self.node_direct_type_match(node, inode):
+                return node
+
+        node.set_inode(inode)
+        node.set_file_offset(inode.db[0] * self._superblock.fsize)
+        if inode.get_offset() in self._scan_results.active_inodes:
+            node.set_active(True)
+        return node
+
+    def _add_direct_to_node(self, node, direct):
+        if not node:
+            if direct.type == 0x4:
+                node = Node(NodeType.DIRECTORY)
+            else:
+                node = Node(NodeType.FILE)
+        else:
+            if not self.node_direct_type_match(node, direct):
+                return node
+
+        if direct.get_offset() in self._scan_results.active_directs:
+            node.set_active(True)
+        _inode_offset = ino_to_offset(self._scan_results.superblock, direct.ino)
+        node.set_direct(direct)
+        node.set_direct_offset(direct.get_offset())
+        node.set_inode_offset(_inode_offset)
+        node.set_name(direct.get_name())
+        # This is the parent directory offset.. is useful?
+        # node.set_directory_offset(self.align_to_start_of_frag(direct.get_offset()))
+        if direct.get_offset() == None:
+            Logger.log("WTF?!")
+        return node
+
+    def node_inode_type_match(self, node, inode):
+        isDir = inode_is_directory(inode)
+        if isDir and node.get_type() == NodeType.DIRECTORY:
+            return True
+        if not isDir and node.get_type() == NodeType.FILE:
+            return True
+        return False
+    
+    def node_direct_type_match(self, node, direct):
+        isDir = direct.type == 0x4
+        if isDir and node.get_type() == NodeType.DIRECTORY:
+            return True
+        if not isDir and node.get_type() == NodeType.FILE:
+            return True
+        return False
+
     #
-    # Step 1 : Creat all nodes
+    # Step 1 : Create all nodes
     #
     def _create_nodes_from_directs_linked_to_inodes(self):
         Logger.log("UFS2Linker [Step 1/2] |- Creating nodes from recovered directs that have their inodes also recovered")
@@ -557,6 +628,8 @@ class UFS2Linker:
             if inode:
                 node = self._create_node(direct, inode)
                 nodes.append( node )
+                self._claimed_inodes[inode.get_offset()] = inode
+                self._claimed_directs[direct.get_offset()] = direct
         return nodes
 
     def _create_nodes_from_unclaimed_inodes(self):
@@ -583,17 +656,18 @@ class UFS2Linker:
         Logger.log("UFS2Linker [Step 1/2] |- Creating nodes from directories that have no nodes")
         nodes = []
         for directory in self._scan_results.directory_map.values():
-            current_inode_offset = ino_to_offset(self._scan_results.superblock, directory.get_direct(".").ino)
-            if current_inode_offset in self._inode_node_map.keys():
-                possible_parent_nodes = self._inode_node_map[current_inode_offset]
+            cur_dir_inode_offset = ino_to_offset(self._scan_results.superblock, directory.get_direct(".").ino)
+            if cur_dir_inode_offset in self._inode_node_map.keys():
+                possible_parent_nodes = self._inode_node_map[cur_dir_inode_offset]
                 directory_exists_in_possible_parents = False
                 for node in possible_parent_nodes:
                     if node.get_type() == NodeType.DIRECTORY:
                         directory_exists_in_possible_parents = True
                         break
                 if directory_exists_in_possible_parents:
+                    # A node has already been created for this directory
                     continue
-            node = self._create_node(None, None, current_inode_offset)
+            node = self._create_node(None, None, cur_dir_inode_offset)
             node.set_directory_offset(directory.get_offset())
             nodes.append(node)
         return nodes
