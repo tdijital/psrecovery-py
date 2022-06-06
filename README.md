@@ -3,18 +3,20 @@ A prototype to explore different file recovery techniques for the UFS2 filesyste
 
 ## Requirements
 
-- Python 3.10.x
+- Python 3.10.0
+
+_The disklib.cp310-win_amd64.pyd is very picky about which python version is used. You can compile a new pyd from [PS-HDD-Tools](https://github.com/aerosoul94/PS-HDD-Tools) if you want to support other python versions. Make sure the python you are calling has its path set to the 3.10.0 install. You check which version yours points to with `python -V`_
 
 ## Usage
 
 To open the app GUI:
-`py main.py`
+`python main.py`
 
 To open the app and begin scanning with CLI on a *DECRYPTED* hdd image:
-`py main.py <hdd img> [args]`
+`python main.py <hdd img> [args]`
 
 To open the app and begin scanning with CLI on an *ENCRYPTED* hdd image:
-`py main.py <hdd img> <key file> [args]`
+`python main.py <hdd img> <key file> [args]`
 
 Pass the argument `--deep-scan` to do a deep scan, by default the fast scan will be run.
 
@@ -85,14 +87,14 @@ If the drive has been formatted multiple times sometimes that partition can chan
 - Check for collisions between files.
 - Better filtering of the scan results.
 - Scan for stray SuperBlocks and CylinderGroups if found use them in relevant directs to calculate ino to offset.
-- Allow the user to select what file types that want to scan for in the FileCarver.
+- Allow the user to select what file types they want to scan for in the FileCarver.
 - Dynamically get partitions and partition names using disklib.
-
-### Experimental TODO
-- Scan for unclaimed indirect block tables.
-  - Try to identify file match for the block table in carved files.
-
+- Finish the Unreal Scanner
 
 ### Unreal Analyzer TODO
 - Attempt to match files in an Unreal TOC by filesize and location on disk for TOCs with no md5s.
 - Attempt to match orphaned blocktables to files in an Unreal TOC by filesize and location on disk.
+
+### Experimental TODO
+- Scan for unclaimed indirect block tables.
+  - Try to identify file match for the block table in carved files.
