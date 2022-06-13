@@ -32,6 +32,69 @@ class DiskType():
 
 _file_disk_stream = None
 
+class MetaDataScannerThread(threading.Thread):
+    def __init__(self, disk, partition_name):
+        threading.Thread.__init__(self)
+        self.meta_data_scanner = Scanner(disk, partition_name)
+        self.nodes = []
+        self.name = 'Scanner'
+        self._disk = disk
+        self._partition_name = partition_name
+        self._loadpath = ''
+        self._deep_scan = False
+        self._scan_complete = False
+
+    def set_scan_args(self, loadpath, deep_scan=False):
+        self._loadpath = loadpath
+        self._deep_scan = deep_scan
+        
+    def run(self):
+        self.meta_data_scanner.scan(self._loadpath,self._deep_scan)
+        self.meta_data_scanner.scan_active_filesystem()
+        
+        # Creates nodes and makes associations between inodes and directs
+        linker = UFS2Linker(self._disk, self.meta_data_scanner.scan_results)
+        self.nodes = linker.get_root_nodes()
+
+        # Create Stream
+        partition = self._disk.getPartitionByName(self._partition_name)
+        stream = partition.getDataProvider()
+        
+        # Attempt to identify unknown nodes with inodes
+        nodes = self.identify_unknown_node_filetypes(stream, self.nodes)
+
+        # Check validity of nodes
+        Logger.log("Checking validity of nodes...")
+        self.check_nodes_validity(stream, self.nodes)
+
+        self._scan_complete = True
+        self.is_alive = False
+
+
+
+    def identify_unknown_node_filetypes(self, stream, nodes):
+        Logger.log("Identifying unknown files filetypes...")
+        inode_ident = InodeIdentifier(stream)
+        identified_count = 0
+        for node in nodes:
+            node:Node
+            if not node.get_inode() or node.get_type() == NodeType.DIRECTORY or node.get_direct():
+                continue
+            file_sig = inode_ident.identify_unk_inode_filetype(node.get_inode())
+            if file_sig:
+                identified_count += 1
+                node.set_file_ext(file_sig.extension)
+
+        Logger.log(f"Identified {identified_count} unknown filetypes!")
+        return nodes
+
+    def check_nodes_validity(self, stream, nodes):
+        validator = NodeValidator(stream)
+        for node in nodes:
+            validator.validate(node)
+            if len(node.get_children()) > 0:
+                self.check_nodes_validity(stream, node.get_children())
+
 
 class App(tk.Frame):
     def __init__(self, master, path = None, key=None, deep_scan=None):
@@ -65,6 +128,9 @@ class App(tk.Frame):
 
         self.scan_menu = None
         self.analysis_menu = None
+
+        # Thread
+        self.meta_data_scanner_thread = None
 
         if path:
             self._master.after(100, self.begin_disk_scan_metaanalysis, path, key, deep_scan)
@@ -137,10 +203,7 @@ class App(tk.Frame):
         load_path = os.path.normpath(f"{os.getcwd()}\\scans") + "\\" + os.path.basename(self._current_diskpath).split(".")[0]
         load_path = load_path.lower()
         return load_path
-
-    #
-    # Meta Data Analysis
-    #
+    
     def begin_disk_scan_active_fs(self):
         # Scan the disks partition
         scan_results = self.scan_active_fs_on_partition(self._current_disk, self._current_partition_name)
@@ -153,37 +216,23 @@ class App(tk.Frame):
         stream = partition.getDataProvider()
 
         # Show results
-        self.display_scan_results_tab(stream, nodes)
-    
-    def begin_disk_scan_metaanalysis(self, is_deep_scan=False):
-        # Scan the disks partition
-        scan_results = self.scan_for_deleted_on_partition(self._current_disk, self._current_partition_name, is_deep_scan)
-        
-        # Create nodes from the scans results
-        nodes = self.create_nodes_from_scan_results(self._current_disk, scan_results)
-
-        # Create Stream
-        partition = self._current_disk.getPartitionByName(self._current_partition_name)
-        stream = partition.getDataProvider()
-        
-        # Attempt to identify unknown nodes with inodes
-        nodes = self.identify_unknown_node_filetypes(stream, nodes)
-
-        # Check validity of nodes
-        Logger.log("Checking validity of nodes...")
-        self.check_nodes_validity(stream, nodes)
-
-        # Show results
-        self.display_scan_results_tab(stream, nodes)
+        self.display_scan_results_tab(nodes)
 
     def scan_active_fs_on_partition(self, disk, partition_name):
         scanner = Scanner(disk, partition_name)
         scanner.scan_active_filesystem()
         return scanner.scan_results
     
-    def scan_for_deleted_on_partition(self, disk, partition_name, is_deep_scan):
-        scanner = Scanner(disk, partition_name)
-        scan_logfile = None
+    def create_nodes_from_scan_results(self, disk, scan_results):
+        # Creates nodes and makes associations between inodes and directs
+        linker = UFS2Linker(disk, scan_results)
+        nodes = linker.get_root_nodes()
+        return nodes
+    
+    #
+    # Meta Data Analysis
+    #
+    def begin_disk_scan_metaanalysis(self, is_deep_scan=False):
         
         load_path = self.get_loadpath()
         load_path_meta_analysis = self.get_loadpath()
@@ -193,24 +242,28 @@ class App(tk.Frame):
         if not os.path.exists(load_path_meta_analysis + "\\inodes.txt"):
             if not os.path.exists(load_path_meta_analysis):
                 os.makedirs(load_path_meta_analysis)
-            scan_logfile = open(load_path + '\\scan-log.txt','w', encoding='utf8')
-            Logger.streams.append(scan_logfile)
-
-        # Find deleted inodes and directs
-        scanner.scan(load_path_meta_analysis, is_deep_scan)
-        scanner.scan_active_filesystem()
-
-        # Stop logging for the scan
-        if scan_logfile:
-            Logger.remove_stream(scan_logfile)
         
-        return scanner.scan_results
+        self.meta_data_scanner_thread = MetaDataScannerThread(self._current_disk, self._current_partition_name)
+        self.meta_data_scanner_thread.set_scan_args(load_path_meta_analysis, is_deep_scan)
+        self.meta_data_scanner_thread.start()
 
-    def create_nodes_from_scan_results(self, disk, scan_results):
-        # Creates nodes and makes associations between inodes and directs
-        linker = UFS2Linker(disk, scan_results)
-        nodes = linker.get_root_nodes()
-        return nodes
+        self.check_if_scan_complete()
+
+    def check_if_scan_complete(self):
+
+        if self.meta_data_scanner_thread._scan_complete:
+            self.on_metadata_scan_complete(self.meta_data_scanner_thread.meta_data_scanner)
+        else:
+            # check every 100ms
+            self.after(100, self.check_if_scan_complete)
+    
+    def on_metadata_scan_complete(self, scanner):
+
+        # Set the nodes from the scanner
+        nodes = self.meta_data_scanner_thread.nodes
+
+        # Show results
+        self.display_scan_results_tab(nodes)
 
     def identify_unknown_node_filetypes(self, stream, nodes):
         Logger.log("Identifying unknown files filetypes...")
@@ -310,7 +363,7 @@ class App(tk.Frame):
     #
     # Display other GUI windows
     #
-    def display_scan_results_tab(self, stream, nodes):
+    def display_scan_results_tab(self, nodes):
         if self._splash:
             self._splash.pack_forget()
             self._splash.grid_forget()
@@ -321,6 +374,10 @@ class App(tk.Frame):
             self._recovered_file_browser.load_nodes(nodes)
         else:
             self._master.geometry("1440x960")
+
+            # Create Stream
+            partition = self._current_disk.getPartitionByName(self._current_partition_name)
+            stream = partition.getDataProvider()
 
             # Create frame for viewing the scan results
             self._recovered_file_browser = MetaAnalysisFileBrowser(self._master, stream, nodes)
