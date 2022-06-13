@@ -6,12 +6,14 @@ import tkinter as tk
 import tkinter
 from tkinter.constants import ANCHOR, BOTH, DISABLED, LEFT, NORMAL
 import tkinter.ttk as ttk
-from tkinter import Entry, Label, Menu, PhotoImage, Button, Radiobutton, filedialog, simpledialog
+from tkinter import Entry, Frame, Text, Label, Menu, PhotoImage, Button, Radiobutton, filedialog, simpledialog
+from turtle import bgcolor
+from typing import Text
 
 from analysis.analyzer import Scanner, UFS2Linker
 from analysis.node import Node, NodeType, NodeValidator
 from analysis.carver import InodeIdentifier
-from analysis.ufs import Endianness, endianness
+from analysis.ufs import Endianness, endianness, ino_to_offset
 import analysis.ufs
 from common.logger import Logger
 from common.event import Event
@@ -137,15 +139,18 @@ class FileBrowser(tk.Frame):
         info_window.geometry("250x200")
         info_window.title(
             f"{self.fs_tree.item(self.item_right_click_on)['text']} Info")
+        #info_window.resizable(0,1)
+        
+        grid_frame = Frame(info_window)
 
         def add_attribute_row_item(label, value, row):
             entryText = tk.StringVar()
             entryText.set(value)
-            lbl = Label(info_window, text=f'{label:<20}')
-            entry = Entry(info_window, textvariable=entryText,
+            lbl = Label(grid_frame, text=f'{label:<20}')
+            entry = Entry(grid_frame, textvariable=entryText,
                           state='readonly')
-            lbl.grid(row=row, column=0, padx=2)
-            entry.grid(row=row, column=1)
+            lbl.grid(row=row, column=0, padx=2, sticky=tk.W)
+            entry.grid(row=row, column=1, sticky=tk.E)
 
         add_attribute_row_item("Filename: ", self.fs_tree.item(self.item_right_click_on)['text'],0)
         add_attribute_row_item("Direct Offset: ",self.node_map[self.item_right_click_on].get_direct_offset(),1)
@@ -156,6 +161,14 @@ class FileBrowser(tk.Frame):
         if self.node_map[self.item_right_click_on].get_inode():
             # 0x800 is a hardcoded fragment size
             add_attribute_row_item("First DB Offset: ", id(self.node_map[self.item_right_click_on].get_file_offset()), 6)
+        grid_frame.pack(anchor=tk.NW)
+
+        debug_text = tk.Text(info_window, font=("regular", 8), wrap="word", padx=4, pady=4)
+        debug_text.pack(fill='both', expand=True)
+        debug_text.tag_config('note', foreground="#6B6B6B")
+
+        debug_text.insert('end', 'File validation errors:\n', 'note')
+        debug_text.insert('end', self.node_map[self.item_right_click_on].get_debug_info_text())
 
 
     def recover_selected_files(self):

@@ -1,5 +1,6 @@
 import math
 from analysis.ufs import SuperBlock, InodeReader
+from common.logger import Logger
 
 class NodeType:
     FILE = 0
@@ -28,6 +29,7 @@ class Node:
         self._active = False
         self._valid = True
         self._file_offset = None
+        self._debug_info = ""
 
     def set_active(self, active):
         self._active = active
@@ -103,22 +105,66 @@ class Node:
         self._file_offset = offset
     def get_file_offset(self):
         return self._file_offset
+    def set_debug_info_text(self, text):
+        self._debug_info = text
+    def append_debug_info_text(self, text):
+        self._debug_info += text + "\n"
+    def get_debug_info_text(self):
+        return self._debug_info
     def __repr__(self):
         return self.get_name()
 
 
 class NodeValidator():
     def __init__(self, stream):
-        self._inode_reader = InodeReader(stream)
-        self._superblock = SuperBlock(stream)
-    
+        self._stream = stream
+        self._inode_reader = InodeReader(self._stream)
+        self._superblock = SuperBlock(self._stream)
+
+        self._block_map = {}
+
     def validate(self, node):
         inode = node.get_inode()
         if not node.get_inode():
+            node.append_debug_info_text(f'[Missing Inode] No inode can be found for this direct.')
             return
+        
         block_indexes = self._inode_reader.get_block_indexes(inode)
+
+        # Check if a more recently written node claims that data block already
+        node_is_invalid = False
+        i = 0
+        for index in block_indexes:
+            claim_block = True
+            if index in self._block_map:
+                other_node = self._block_map.get(index)
+                if other_node.get_last_modified_time() == node.get_last_modified_time():
+                    continue
+                if other_node.get_last_modified_time() > node.get_last_modified_time():
+                    # This node is invalid
+                    Logger.log(f'{node.get_name()} block is overwritten at file offset: 0x{i * self._superblock.bsize:X} by file {other_node.get_name()}')
+                    node.append_debug_info_text(f'[Overwritten] at file offset: 0x{i * self._superblock.bsize:X} by file {other_node.get_name()}')
+                    claim_block = False
+                    node_is_invalid = True
+                    node.set_valid(False)
+                else:
+                    # The other node is invalid
+                    Logger.log(f'{other_node.get_name()} block is overwritten at file offset: 0x{i * self._superblock.bsize:X} by file {node.get_name()}')
+                    other_node.append_debug_info_text(f'[Overwritten] at file offset: 0x{i * self._superblock.bsize:X} by file {node.get_name()}')
+                    other_node.set_valid(False)
+        
+            if claim_block:
+                self._block_map[index] = node
+
+            i += 1
+
+        if node_is_invalid:
+            return False
+
+        # Check that the node has all the required datablocks that the file size requires
         required_blocks = math.ceil(inode.size / self._superblock.bsize)
         if len(block_indexes) != required_blocks:
+            node.append_debug_info_text(f'[Missing data blocks] Has {len(block_indexes)} of the {required_blocks} required block indexes')
             node.set_valid(False)
             return False
         return True
