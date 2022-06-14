@@ -13,7 +13,7 @@ class FileReader():
     def __init__(self, stream):
         self._stream = stream
         self._superblock = SuperBlock(self._stream)
-        self._inode_reader = InodeReader(stream)
+        self._inode_reader = InodeReader(self._stream)
 
     def get_node_bytes(self, node):
         inode = node.get_inode()

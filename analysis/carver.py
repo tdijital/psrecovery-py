@@ -1,4 +1,5 @@
 import struct
+import threading
 import zlib
 import analysis
 import os
@@ -567,42 +568,59 @@ all_filecarvers = [a_filecarver for a_filecarver in FileCarver.__subclasses__()]
 #all_filecarvers = [UnrealTOCCarver]
 
 
-class FileCarverScanner():
-    def __init__(self, stream):
-        #self._superblock = SuperBlock(self._stream)
+class FileCarverScanner(threading.Thread):
+    def __init__(self, disk, partition_name, loadpath):
+        threading.Thread.__init__(self)
+        self.name = "FileCarver"
         self.identified_file_sigs = []
-    
-    def scan(self, stream, loadpath, start=0, end=0, interval=None):
-        Logger.log("Beginning FileCarver scan...")
 
-        if os.path.exists(loadpath + '\\filecarver.txt'):
-            self._load_from_files(stream, loadpath)
+        self._partition = disk.getPartitionByName(partition_name)
+        self._stream = self._partition.getDataProvider()
+
+        self._loadpath = loadpath
+        self._scan_begin_offset = 0
+        self._scan_end_offset = 0
+        self._scan_interval = 0x800 # Default is fsize (the smallest you should ever need)
+
+        self._scan_complete = False
+
+    def set_scan_settings(self, stream, loadpath, begin_offset=0, end_offset=0, interval=0x800):
+        self._stream = stream
+        self._loadpath = loadpath
+        self._scan_begin_offset = begin_offset
+        self._scan_end_offset = end_offset
+        self._scan_interval = interval
+    
+    def run(self):
+        Logger.log("Beginning FileCarver scan...")
+        self._scan_complete = False
+
+        if os.path.exists(self._loadpath + '\\filecarver.txt'):
+            self._load_from_files(self._loadpath)
             return
 
-        if end == 0:
-            stream.seek(0, 2)
-            end = stream.tell()
-            stream.seek(0, 0)
-        
-        if interval == None:
-            #interval = self._superblock.fsize
-            interval = 0x800
+        if self._scan_end_offset == 0:
+            self._stream.seek(0, 2)
+            self._scan_end_offset = self._stream.tell()
+            self._stream.seek(0, 0)
 
         global all_filecarvers
-        for offset in range(start, end, interval):
+        for offset in range(self._scan_begin_offset, self._scan_end_offset, self._scan_interval):
             for carver in all_filecarvers:
-                tester = carver(stream, offset)
-                stream.seek(offset)
+                tester = carver(self._stream, offset)
+                self._stream.seek(offset)
                 if tester.test():
-                    stream.seek(offset)
+                    self._stream.seek(offset)
                     Logger.log(f"Found {tester.__class__.__name__}... at offset 0x{offset:X}")
                     self.identified_file_sigs.append(tester)
             if (offset & 0xfffffff) == 0:
-                percent = round((offset/end)*100,2)
+                percent = round((offset/self._scan_end_offset)*100,2)
                 Logger.log(f"Percent Complete: {percent}%")
         
-        self._save_scan_to_files(loadpath)
+        self._save_scan_to_files(self._loadpath)
         self.parse_identified_file_sigs()
+
+        self._scan_complete = True
 
     def parse_identified_file_sigs(self):
         Logger.log("Parsing found files...")
@@ -634,7 +652,7 @@ class FileCarverScanner():
                 fp.write(f"{fc.offset}\n")
         Logger.log(f"Saved file scanner files to: {loadpath}")
 
-    def _load_from_files(self, stream, loadpath):
+    def _load_from_files(self, loadpath):
         Logger.log(f"Loading file scanner results from files at: {loadpath}")
         filecarver_list = []
         with open(loadpath + '\\filecarver.txt', 'r') as fp:
@@ -643,10 +661,10 @@ class FileCarverScanner():
         for line in filecarver_list:
             offset = int(line.strip())
             for carver in all_filecarvers:
-                tester = carver(stream, offset)
-                stream.seek(offset)
+                tester = carver(self._stream, offset)
+                self._stream.seek(offset)
                 if tester.test():
-                    stream.seek(offset)
+                    self._stream.seek(offset)
                     Logger.log(f"Found {tester.__class__.__name__}... at offset 0x{offset:X}")
                     self.identified_file_sigs.append(tester)
 

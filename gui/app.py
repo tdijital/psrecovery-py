@@ -129,8 +129,9 @@ class App(tk.Frame):
         self.scan_menu = None
         self.analysis_menu = None
 
-        # Thread
-        self.meta_data_scanner_thread = None
+        # Threads
+        self._meta_data_scanner_thread = None
+        self._filecarver_scanner_thread = None
 
         if path:
             self._master.after(100, self.begin_disk_scan_metaanalysis, path, key, deep_scan)
@@ -243,16 +244,16 @@ class App(tk.Frame):
             if not os.path.exists(load_path_meta_analysis):
                 os.makedirs(load_path_meta_analysis)
         
-        self.meta_data_scanner_thread = MetaDataScannerThread(self._current_disk, self._current_partition_name)
-        self.meta_data_scanner_thread.set_scan_args(load_path_meta_analysis, is_deep_scan)
-        self.meta_data_scanner_thread.start()
+        self._meta_data_scanner_thread = MetaDataScannerThread(self._current_disk, self._current_partition_name)
+        self._meta_data_scanner_thread.set_scan_args(load_path_meta_analysis, is_deep_scan)
+        self._meta_data_scanner_thread.start()
 
         self.check_if_scan_complete()
 
     def check_if_scan_complete(self):
 
-        if self.meta_data_scanner_thread._scan_complete:
-            self.on_metadata_scan_complete(self.meta_data_scanner_thread.meta_data_scanner)
+        if self._meta_data_scanner_thread._scan_complete:
+            self.on_metadata_scan_complete(self._meta_data_scanner_thread.meta_data_scanner)
         else:
             # check every 100ms
             self.after(100, self.check_if_scan_complete)
@@ -260,33 +261,10 @@ class App(tk.Frame):
     def on_metadata_scan_complete(self, scanner):
 
         # Set the nodes from the scanner
-        nodes = self.meta_data_scanner_thread.nodes
+        nodes = self._meta_data_scanner_thread.nodes
 
         # Show results
         self.display_scan_results_tab(nodes)
-
-    def identify_unknown_node_filetypes(self, stream, nodes):
-        Logger.log("Identifying unknown files filetypes...")
-        inode_ident = InodeIdentifier(stream)
-        identified_count = 0
-        for node in nodes:
-            node:Node
-            if not node.get_inode() or node.get_type() == NodeType.DIRECTORY or node.get_direct():
-                continue
-            file_sig = inode_ident.identify_unk_inode_filetype(node.get_inode())
-            if file_sig:
-                identified_count += 1
-                node.set_file_ext(file_sig.extension)
-
-        Logger.log(f"Identified {identified_count} unknown filetypes!")
-        return nodes
-
-    def check_nodes_validity(self, stream, nodes):
-        validator = NodeValidator(stream)
-        for node in nodes:
-            validator.validate(node)
-            if len(node.get_children()) > 0:
-                self.check_nodes_validity(stream, node.get_children())
 
     #
     # File Carver
@@ -298,25 +276,25 @@ class App(tk.Frame):
         # This scans the whole disk not just the partition
         # stream = self._current_disk.getDataProvider()
 
-        # This scans just the partition
-        partition = self._current_disk.getPartitionByName(self._current_partition_name)
-        stream = partition.getDataProvider()
-
         loadpath = self.get_loadpath() + "\\file_carver"
-        if not os.path.exists(loadpath):
-            os.makedirs(loadpath)
-        scan_logfile = open(loadpath + '\\filecarver-log.txt','w', encoding='utf8')
-        Logger.streams.append(scan_logfile)
 
-        filecarver = FileCarverScanner(stream)
-        filecarver.scan(stream, loadpath)
+        self._filecarver_scanner_thread = FileCarverScanner(self._current_disk, self._current_partition_name, loadpath)
+        self._filecarver_scanner_thread.start()
+    
+    def check_if_filecarver_complete(self):
 
-        Logger.remove_stream(scan_logfile)
+        if self._filecarver_scanner_thread._scan_complete:
+            self.on_filecarver_complete()
+        else:
+            # check every 100ms
+            self.after(100, self.check_if_filecarver_complete)
 
-        nodes =  filecarver.get_nodes()
-        self._carved_file_browser = FileCarverFileBrowser(self._master, stream, nodes)
+    def on_filecarver_complete(self):
+        nodes =  self._filecarver_scanner_thread.get_nodes()
+        self._carved_file_browser = FileCarverFileBrowser(self._master, self._filecarver_scanner_thread._stream, nodes)
         
         self.update_gui()
+        self.check_if_scan_complete()
 
     #
     # Unreal Analyzer
@@ -359,6 +337,32 @@ class App(tk.Frame):
         self._unreal_analyzer_browser = UnrealFileBrowser(self._master, stream, nodes)
         
         self.update_gui()
+
+    #
+    # Validation & Identification
+    #
+    def identify_unknown_node_filetypes(self, stream, nodes):
+        Logger.log("Identifying unknown files filetypes...")
+        inode_ident = InodeIdentifier(stream)
+        identified_count = 0
+        for node in nodes:
+            node:Node
+            if not node.get_inode() or node.get_type() == NodeType.DIRECTORY or node.get_direct():
+                continue
+            file_sig = inode_ident.identify_unk_inode_filetype(node.get_inode())
+            if file_sig:
+                identified_count += 1
+                node.set_file_ext(file_sig.extension)
+
+        Logger.log(f"Identified {identified_count} unknown filetypes!")
+        return nodes
+
+    def check_nodes_validity(self, stream, nodes):
+        validator = NodeValidator(stream)
+        for node in nodes:
+            validator.validate(node)
+            if len(node.get_children()) > 0:
+                self.check_nodes_validity(stream, node.get_children())
 
     #
     # Display other GUI windows
