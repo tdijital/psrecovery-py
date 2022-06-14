@@ -85,7 +85,7 @@ class FileWriterThread(threading.Thread):
             node = self._file_queue[0][1]
             inode = node.get_inode()
 
-            Logger.log(f"Dumping... {file_path}{node.get_name()}")
+            Logger.log(f"Dumping... {file_path}")
 
             # If an inode exists read the inodes blocks
             if inode is not None:
