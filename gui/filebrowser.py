@@ -51,10 +51,13 @@ class FindDialog(tk.simpledialog.Dialog):
 
 
 class FileBrowser(tk.Frame):
-    def __init__(self, root, stream, nodes):
+    def __init__(self, root, disk, partition_name, nodes):
         super(FileBrowser, self).__init__()
+
+        self._partition = disk.getPartitionByName(partition_name)
+        self._stream = self._partition.getDataProvider()
+
         self._root = root
-        self._stream = stream
         self.item_right_click_on = None
         self._search_text = ""
         self._find_recoverable_only = False
@@ -153,14 +156,14 @@ class FileBrowser(tk.Frame):
             entry.grid(row=row, column=1, sticky=tk.E)
 
         add_attribute_row_item("Filename: ", self.fs_tree.item(self.item_right_click_on)['text'],0)
-        add_attribute_row_item("Direct Offset: ",self.node_map[self.item_right_click_on].get_direct_offset(),1)
-        add_attribute_row_item("Directory Offset: ", self.node_map[self.item_right_click_on].get_directory_offset(), 2)
-        add_attribute_row_item("Inode Offset: ", self.node_map[self.item_right_click_on].get_inode_offset(), 3)
-        add_attribute_row_item("Has Inode: ", 'True' if self.node_map[self.item_right_click_on].get_inode() else 'False', 4)
-        add_attribute_row_item("Node ID: ", id(self.node_map[self.item_right_click_on]), 5)
+        add_attribute_row_item("Direct Offset: ",f'0x{self.node_map[self.item_right_click_on].get_direct_offset()+self._partition.getStart():X}',1)
+        if self.node_map[self.item_right_click_on].get_directory_offset(): 
+            add_attribute_row_item("Directory Offset: ", f'0x{self.node_map[self.item_right_click_on].get_directory_offset()+self._partition.getStart():X}', 2)
+        add_attribute_row_item("Inode Offset: ", f'0x{self.node_map[self.item_right_click_on].get_inode_offset()+self._partition.getStart():X}', 3)
         if self.node_map[self.item_right_click_on].get_inode():
-            # 0x800 is a hardcoded fragment size
-            add_attribute_row_item("First DB Offset: ", id(self.node_map[self.item_right_click_on].get_file_offset()), 6)
+            add_attribute_row_item("First DB Offset: ", f'0x{self.node_map[self.item_right_click_on].get_file_offset():X}', 4)
+        add_attribute_row_item("Has Inode: ", 'True' if self.node_map[self.item_right_click_on].get_inode() else 'False', 5)
+        add_attribute_row_item("Node ID: ", id(self.node_map[self.item_right_click_on]), 6)
         grid_frame.pack(anchor=tk.NW)
 
         debug_text = tk.Text(info_window, font=("regular", 8), wrap="word", padx=4, pady=4)
@@ -247,8 +250,8 @@ class FileBrowser(tk.Frame):
 
 
 class MetaAnalysisFileBrowser(FileBrowser):
-    def __init__(self, root, stream, nodes):
-        super().__init__(root, stream, nodes)
+    def __init__(self, root, disk, partition_name, nodes):
+        super().__init__(root, disk, partition_name, nodes)
 
     def clear_nodes(self):
         super().clear_nodes()
@@ -335,8 +338,8 @@ class MetaAnalysisFileBrowser(FileBrowser):
 
 
 class FileCarverFileBrowser(FileBrowser):
-    def __init__(self, root, stream, nodes):
-        super().__init__(root, stream, nodes)
+    def __init__(self, root, disk, partition_name, nodes):
+        super().__init__(root, disk, partition_name, nodes)
 
     def _create_treeview(self):
         tree_columns = ('filesize', 'fileoffset')
@@ -368,8 +371,8 @@ class FileCarverFileBrowser(FileBrowser):
 
 
 class UnrealFileBrowser(FileBrowser):
-    def __init__(self, root, stream, nodes):
-        super().__init__(root, stream, nodes)
+    def __init__(self, root, disk, partition_name, nodes):
+        super().__init__(root, disk, partition_name, nodes)
 
     def _create_treeview(self):
         tree_columns = ('filesize', 'fileoffset')

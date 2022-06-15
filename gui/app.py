@@ -291,7 +291,7 @@ class App(tk.Frame):
 
     def on_filecarver_complete(self):
         nodes =  self._filecarver_scanner_thread.get_nodes()
-        self._carved_file_browser = FileCarverFileBrowser(self._master, self._filecarver_scanner_thread._stream, nodes)
+        self._carved_file_browser = FileCarverFileBrowser(self._master, self._current_disk, self._current_partition_name, nodes)
         
         self.update_gui()
         self.check_if_scan_complete()
@@ -334,7 +334,7 @@ class App(tk.Frame):
         unrealanalyzer.search_for_file_matches()
 
         nodes =  unrealanalyzer.get_root_unodes()
-        self._unreal_analyzer_browser = UnrealFileBrowser(self._master, stream, nodes)
+        self._unreal_analyzer_browser = UnrealFileBrowser(self._master, self._current_disk, self._current_partition_name, nodes)
         
         self.update_gui()
 
@@ -384,7 +384,7 @@ class App(tk.Frame):
             stream = partition.getDataProvider()
 
             # Create frame for viewing the scan results
-            self._recovered_file_browser = MetaAnalysisFileBrowser(self._master, stream, nodes)
+            self._recovered_file_browser = MetaAnalysisFileBrowser(self._master, self._current_disk, self._current_partition_name, nodes)
             
             self.update_gui()
 
