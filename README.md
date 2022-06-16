@@ -60,15 +60,11 @@ You may still be in luck. What we know for certain is that the block index table
 
 __The file I want to recover has a *RED* indicator am I out of luck?__
 \
-You still may be in luck here too! Albeit this one is a bit more tough. The data very well may be on the drive -- it's even possible that it's one of the unknown inodes the scanner found. We just have no information to link the two. Hopefully the file carver which isn't implemented yet can help here. There will be some caveats though but I will cover those when the file carver is added.
+You still may be in luck here too! Albeit this one is a bit more tough. The data very well may be on the drive -- it's even possible that it's one of the unknown inodes the scanner found. We just have no information to link the two.
 
 __I recovered a file that had a *GREEN* checkmark and it was a corrupt file, whyyyy?!__
 \
-Currently psrecovery-py doesn't look for collisions between active files in the filesystem or between other deleted files. So likely the files data blocks were taken by a newer file. Unfortunately that likely means the data is overwritten and not present on the drive.
-
-__There's a folder somewhere I know it shouldn't be, what's the deal?__
-\
-This can happen if a newer folder re-uses an old folders inode offset location. The children will stil reference the old parent folders inode offset. So as far as we can see it is a child of that parent.
+It's possible that the data blocks were overwritten by a file that was deleted but we werent able to recover. All I can say for certain is that none of the file was overwritten by any recovered files, or active files on the file system.
 
 __What happens when I dump a file with a red indicator?__
 \
@@ -76,15 +72,14 @@ A 0kb file will be written in place of the file.
 
 __What's the difference between deep scan and fast scan?__
 \
-Deep scan will search every single fragment in the drive for directs and inodes.
+Deep scan will search every single fragment (0x800) in the drive for directs and inodes.
 Fast scan only searches areas defined by the super block that contain inodes and directs.
 
 __Why would I use deep scan?__
 \
-If the drive has been formatted multiple times sometimes that partition can change where it stores its inodes and directs, the fast scan would miss these if they aren't where it expects. __Deep scan has a potential to return false positives.__
+If the drive has been formatted multiple times sometimes that partition can change where it stores its inodes and directs, the fast scan would miss these if they aren't where it expects.
 
 ## TODO
-- Check for collisions between files.
 - Better filtering of the scan results.
 - Scan for stray SuperBlocks and CylinderGroups if found use them in relevant directs to calculate ino to offset.
 - Allow the user to select what file types they want to scan for in the FileCarver.
