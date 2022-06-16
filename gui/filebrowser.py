@@ -138,6 +138,8 @@ class FileBrowser(tk.Frame):
         self.context_menu.tk_popup(event.x_root, event.y_root, 0)
 
     def display_file_info(self):
+        if self.item_right_click_on == 'I001':
+            return
         info_window = tk.Toplevel()
         info_window.geometry("250x200")
         info_window.title(
@@ -271,6 +273,8 @@ class MetaAnalysisFileBrowser(FileBrowser):
     def _process_nodes(self, nodes, parent=None):
         if not parent:
             parent = self.fs_tree.insert('', tk.END, text='Root', image=self.folder_direct_ref_ico)
+            parent_node = Node(NodeType.DIRECTORY)
+            self.node_map[parent] = parent_node
         for node in nodes:
             node: Node
             # Exclude meta data
@@ -351,6 +355,8 @@ class FileCarverFileBrowser(FileBrowser):
     def _process_nodes(self, nodes, parent=None):
         if parent == None:
             parent = self.fs_tree.insert('', tk.END, text='Files', image=self.folder_direct_ref_ico)
+            parent_node = Node(NodeType.DIRECTORY)
+            self.node_map[parent] = parent_node
         for node in nodes:
             node: Node
             size = node.get_size()
@@ -384,6 +390,8 @@ class UnrealFileBrowser(FileBrowser):
     def _process_nodes(self, nodes, parent=None):
         if parent == None:
             parent = self.fs_tree.insert('', tk.END, text='Unreal', image=self.folder_direct_ref_ico)
+            parent_node = Node(NodeType.DIRECTORY)
+            self.node_map[parent] = parent_node
         for node in nodes:
             node: Node
             size = node.get_size()
