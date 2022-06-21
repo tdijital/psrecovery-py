@@ -645,9 +645,10 @@ class FileCarverScanner(threading.Thread):
         return nodes
 
     def _save_scan_to_files(self, loadpath):
-        if not os.path.exists(loadpath + "\\"):
-            os.mkdir(loadpath + "\\")
-        with open(loadpath + '\\filecarver.txt', 'a') as fp:
+        loadpath = os.path.normpath(loadpath)
+        if not os.path.exists(loadpath):
+            os.mkdir(loadpath)
+        with open(loadpath + 'filecarver.txt', 'a') as fp:
             for fc in self.identified_file_sigs:
                 fp.write(f"{fc.offset}\n")
         Logger.log(f"Saved file scanner files to: {loadpath}")

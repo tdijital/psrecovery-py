@@ -379,15 +379,16 @@ class Scanner:
         self._find_missing_directs()
 
     def _save_scan_to_files(self, loadpath):
-        if not os.path.exists(loadpath + "\\"):
-            os.mkdir(loadpath + "\\")
-        with open(loadpath + '\\inodes.txt', 'w') as fp:
+        loadpath = os.path.normpath(loadpath + "\\")
+        if not os.path.exists(loadpath):
+            os.mkdir(loadpath)
+        with open(loadpath + 'inodes.txt', 'w') as fp:
             for inode in self.scan_results.inode_map:
                 fp.write(f"{inode}\n")
-        with open(loadpath + '\\directs.txt', 'w') as fp:
+        with open(loadpath + 'directs.txt', 'w') as fp:
             for direct in self.scan_results.directs_map:
                 fp.write(f"{direct}\n")
-        with open(loadpath + '\\directories.txt', 'w') as fp:
+        with open(loadpath + 'directories.txt', 'w') as fp:
             for directory in self.scan_results.directory_map:
                 fp.write(f"{directory}\n")
         Logger.log(f"Saved scan files to: {loadpath}")
