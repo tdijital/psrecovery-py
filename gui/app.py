@@ -43,13 +43,20 @@ class MetaDataScannerThread(threading.Thread):
         self._loadpath = ''
         self._deep_scan = False
         self._scan_complete = False
+        self._terminate_thread = False
 
     def set_scan_args(self, loadpath, deep_scan=False):
         self._loadpath = loadpath
         self._deep_scan = deep_scan
         
     def run(self):
+        self._terminate_thread = False
+
         self.meta_data_scanner.scan(self._loadpath,self._deep_scan)
+
+        if self._terminate_thread:
+            return
+        
         self.meta_data_scanner.scan_active_filesystem()
         
         # Creates nodes and makes associations between inodes and directs
@@ -70,8 +77,6 @@ class MetaDataScannerThread(threading.Thread):
         self._scan_complete = True
         self.is_alive = False
 
-
-
     def identify_unknown_node_filetypes(self, stream, nodes):
         Logger.log("Identifying unknown files filetypes...")
         inode_ident = InodeIdentifier(stream)
@@ -84,6 +89,8 @@ class MetaDataScannerThread(threading.Thread):
             if file_sig:
                 identified_count += 1
                 node.set_file_ext(file_sig.extension)
+                if file_sig.name != '':
+                    node.set_name(file_sig.name)
 
         Logger.log(f"Identified {identified_count} unknown filetypes!")
         return nodes
@@ -94,6 +101,10 @@ class MetaDataScannerThread(threading.Thread):
             validator.validate(node)
             if len(node.get_children()) > 0:
                 self.check_nodes_validity(stream, node.get_children())
+
+    def terminate(self):
+        self._terminate_thread = True
+        self.meta_data_scanner.abort_scan = True
 
 
 class App(tk.Frame):
@@ -136,6 +147,8 @@ class App(tk.Frame):
         if path:
             self._master.after(100, self.begin_disk_scan_metaanalysis, path, key, deep_scan)
 
+        self._master.protocol("WM_DELETE_WINDOW", self.on_closing)
+
         self.show_splash()
 
     def show_splash(self):
@@ -144,6 +157,12 @@ class App(tk.Frame):
         inner_frame.pack(fill="both", expand=True)
         Label(inner_frame, image=splash_image, background='#1F67F6').pack(fill="both", expand=True)
         self._master.mainloop()
+
+    def on_closing(self):
+        if self._meta_data_scanner_thread:
+            self._meta_data_scanner_thread.terminate()
+            self._meta_data_scanner_thread.join()
+        self._master.destroy()
     
     #
     # Disk
@@ -266,6 +285,10 @@ class App(tk.Frame):
         # Show results
         self.display_scan_results_tab(nodes)
 
+        # Update the FileCarverBrowser if it exists to remove any files that meta data scanner may have found
+        if self._carved_file_browser and self._filecarver_scanner_thread:
+            self.on_filecarver_complete()
+
     #
     # File Carver
     #
@@ -280,6 +303,8 @@ class App(tk.Frame):
 
         self._filecarver_scanner_thread = FileCarverScanner(self._current_disk, self._current_partition_name, loadpath)
         self._filecarver_scanner_thread.start()
+
+        self.check_if_filecarver_complete()
     
     def check_if_filecarver_complete(self):
 
@@ -291,10 +316,22 @@ class App(tk.Frame):
 
     def on_filecarver_complete(self):
         nodes =  self._filecarver_scanner_thread.get_nodes()
+
+        # Remove any nodes that were already recovered / in the active filesystem
+        file_offsets = []
+
+        for recovered_node in self._recovered_file_browser.node_map.values():
+            file_offsets.append(recovered_node.get_file_offset())
+
+        for node in list(nodes):
+            if node.get_file_offset() in file_offsets:
+                nodes.remove(node)
+        
+        # Instantiate the file browser GUI
         self._carved_file_browser = FileCarverFileBrowser(self._master, self._current_disk, self._current_partition_name, nodes)
         
         self.update_gui()
-        self.check_if_scan_complete()
+
 
     #
     # Unreal Analyzer
@@ -332,6 +369,7 @@ class App(tk.Frame):
         
         unrealanalyzer = UnrealAnalyzer(analyze_nodes, stream)
         unrealanalyzer.search_for_file_matches()
+        unrealanalyzer.assign_file_matches()
 
         nodes =  unrealanalyzer.get_root_unodes()
         self._unreal_analyzer_browser = UnrealFileBrowser(self._master, self._current_disk, self._current_partition_name, nodes)

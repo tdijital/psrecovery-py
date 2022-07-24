@@ -138,43 +138,8 @@ class FileBrowser(tk.Frame):
         self.context_menu.tk_popup(event.x_root, event.y_root, 0)
 
     def display_file_info(self):
-        if self.item_right_click_on == 'I001':
-            return
-        info_window = tk.Toplevel()
-        info_window.geometry("250x200")
-        info_window.title(
-            f"{self.fs_tree.item(self.item_right_click_on)['text']} Info")
-        #info_window.resizable(0,1)
-        
-        grid_frame = Frame(info_window)
-
-        def add_attribute_row_item(label, value, row):
-            entryText = tk.StringVar()
-            entryText.set(value)
-            lbl = Label(grid_frame, text=f'{label:<20}')
-            entry = Entry(grid_frame, textvariable=entryText,
-                          state='readonly')
-            lbl.grid(row=row, column=0, padx=2, sticky=tk.W)
-            entry.grid(row=row, column=1, sticky=tk.E)
-
-        add_attribute_row_item("Filename: ", self.fs_tree.item(self.item_right_click_on)['text'],0)
-        add_attribute_row_item("Direct Offset: ",f'0x{self.node_map[self.item_right_click_on].get_direct_offset()+self._partition.getStart():X}',1)
-        if self.node_map[self.item_right_click_on].get_directory_offset(): 
-            add_attribute_row_item("Directory Offset: ", f'0x{self.node_map[self.item_right_click_on].get_directory_offset()+self._partition.getStart():X}', 2)
-        add_attribute_row_item("Inode Offset: ", f'0x{self.node_map[self.item_right_click_on].get_inode_offset()+self._partition.getStart():X}', 3)
-        if self.node_map[self.item_right_click_on].get_inode():
-            add_attribute_row_item("First DB Offset: ", f'0x{self.node_map[self.item_right_click_on].get_file_offset():X}', 4)
-        add_attribute_row_item("Has Inode: ", 'True' if self.node_map[self.item_right_click_on].get_inode() else 'False', 5)
-        add_attribute_row_item("Node ID: ", id(self.node_map[self.item_right_click_on]), 6)
-        grid_frame.pack(anchor=tk.NW)
-
-        debug_text = tk.Text(info_window, font=("regular", 8), wrap="word", padx=4, pady=4)
-        debug_text.pack(fill='both', expand=True)
-        debug_text.tag_config('note', foreground="#6B6B6B")
-
-        debug_text.insert('end', 'File validation errors:\n', 'note')
-        debug_text.insert('end', self.node_map[self.item_right_click_on].get_debug_info_text())
-
+         # Implement in classes extending this class
+        pass
 
     def recover_selected_files(self):
         outpath = filedialog.askdirectory()
@@ -269,6 +234,45 @@ class MetaAnalysisFileBrowser(FileBrowser):
         self.fs_tree.heading('cdate', text='Date Created', anchor="w")
         self.fs_tree.heading('mdate', text='Date Modified', anchor="w")
         self.fs_tree.heading('adate', text='Date Accessed', anchor="w")
+    
+    def display_file_info(self):
+        if self.item_right_click_on == 'I001':
+            return
+        info_window = tk.Toplevel()
+        info_window.geometry("250x200")
+        info_window.title(
+            f"{self.fs_tree.item(self.item_right_click_on)['text']} Info")
+        #info_window.resizable(0,1)
+        
+        grid_frame = Frame(info_window)
+
+        def add_attribute_row_item(label, value, row):
+            entryText = tk.StringVar()
+            entryText.set(value)
+            lbl = Label(grid_frame, text=f'{label:<20}')
+            entry = Entry(grid_frame, textvariable=entryText,
+                          state='readonly')
+            lbl.grid(row=row, column=0, padx=2, sticky=tk.W)
+            entry.grid(row=row, column=1, sticky=tk.E)
+
+        add_attribute_row_item("Filename: ", self.fs_tree.item(self.item_right_click_on)['text'],0)
+        add_attribute_row_item("Direct Offset: ",f'0x{self.node_map[self.item_right_click_on].get_direct_offset()+self._partition.getStart():X}',1)
+        if self.node_map[self.item_right_click_on].get_directory_offset(): 
+            add_attribute_row_item("Directory Offset: ", f'0x{self.node_map[self.item_right_click_on].get_directory_offset()+self._partition.getStart():X}', 2)
+        add_attribute_row_item("Inode Offset: ", f'0x{self.node_map[self.item_right_click_on].get_inode_offset()+self._partition.getStart():X}', 3)
+        if self.node_map[self.item_right_click_on].get_inode():
+            add_attribute_row_item("First DB Offset: ", f'0x{self.node_map[self.item_right_click_on].get_file_offset():X}', 4)
+        add_attribute_row_item("Has Inode: ", 'True' if self.node_map[self.item_right_click_on].get_inode() else 'False', 5)
+        add_attribute_row_item("Node ID: ", id(self.node_map[self.item_right_click_on]), 6)
+        grid_frame.pack(anchor=tk.NW)
+
+        debug_text = tk.Text(info_window, font=("regular", 8), wrap="word", padx=4, pady=4)
+        debug_text.pack(fill='both', expand=True)
+        debug_text.tag_config('note', foreground="#6B6B6B")
+
+        debug_text.insert('end', 'File validation errors:\n', 'note')
+        debug_text.insert('end', self.node_map[self.item_right_click_on].get_debug_info_text())
+
 
     def _process_nodes(self, nodes, parent=None):
         if not parent:
@@ -381,11 +385,14 @@ class UnrealFileBrowser(FileBrowser):
         super().__init__(root, disk, partition_name, nodes)
 
     def _create_treeview(self):
-        tree_columns = ('filesize', 'fileoffset')
+        tree_columns = ('filesize', 'fileoffset', 'cdate', 'mdate', 'adate')
         self.fs_tree = ttk.Treeview(self, columns=tree_columns)
         self.fs_tree.heading('#0', text='Contents', anchor='w')
         self.fs_tree.heading('filesize', text='File Size', anchor="w")
         self.fs_tree.heading('fileoffset', text='File Offset', anchor="w")
+        self.fs_tree.heading('cdate', text='Date Created', anchor="w")
+        self.fs_tree.heading('mdate', text='Date Modified', anchor="w")
+        self.fs_tree.heading('adate', text='Date Accessed', anchor="w")
     
     def _process_nodes(self, nodes, parent=None):
         if parent == None:
@@ -395,11 +402,17 @@ class UnrealFileBrowser(FileBrowser):
         for node in nodes:
             node: Node
             size = node.get_size()
+            ctime = node.get_creation_time()
+            atime = node.get_last_access_time()
+            mtime = node.get_last_modified_time()            
 
             # Icon
             if node.get_type() == NodeType.FILE:
                 if node.get_file_offset():
-                    icon = self.file_inode_ico
+                    if node.get_valid():
+                        icon = self.file_inode_ico
+                    else:
+                        icon = self.file_warning_ico
                 else:
                     icon = self.file_direct_ico
             else:
@@ -420,11 +433,17 @@ class UnrealFileBrowser(FileBrowser):
             # Tree Item
             item = self.fs_tree.insert(parent, tk.END, text=name, 
             values=(
-                f'{self.format_bytes(size):<10} ({size} bytes)' if size else '', 
+                f'{self.format_bytes(size):<10} ({size} bytes)' if size else '',
                 file_offset,
+                time.ctime(ctime) if ctime and ctime < 32536799999 else '',
+                time.ctime(atime) if atime and atime < 32536799999 else '',
+                time.ctime(mtime) if mtime and mtime < 32536799999 else '',
             ), image=icon)
             self.node_map[item] = node
 
             # Process children nodes
             if node.get_type() == NodeType.DIRECTORY:
                 self._process_nodes(node.get_children(), item)
+
+    def display_file_info(self):
+        return

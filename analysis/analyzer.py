@@ -86,6 +86,10 @@ class Scanner:
         self._partition_name = partition_name
         self.scan_results = None
         self._loaded_from_files = False
+        self._loadpath = ''
+        self._is_deep_scan = True
+        self._is_scanning = False
+        self.abort_scan = False
         self._initialize(disk, partition_name)
 
     def _initialize(self, disk, partition_name):
@@ -193,35 +197,48 @@ class Scanner:
             inodes.append(inode)
         return inodes
     
-    def scan(self, loadpath, deep_scan=False):
-        if os.path.exists(loadpath + '\\inodes.txt') and os.path.exists(loadpath + '\\directories.txt') and os.path.exists(loadpath + '\\directs.txt'):
+    def scan(self, loadpath, deep_scan=False, scan_start_offset = 0x0):
+        self._loadpath = loadpath
+        if os.path.exists(loadpath + '\\inodes.txt') and os.path.exists(loadpath + '\\directories.txt') and os.path.exists(loadpath + '\\directs.txt') and scan_start_offset == 0x0:
             self._loaded_from_files = True
             self._load_from_files(loadpath)
         else:
             # There are no saved results, let's start a new scan
-            Logger.log(f"No previous scan found in {loadpath}")
             Logger.log("Scanning drive")
+
             assert(ctypes.sizeof(self.direct_class) == 0x8)
             assert(ctypes.sizeof(self.inode_class) == 0x100)
             
             t1 = time.time()
 
             # Start scan for deleted files
-            self._deep_scan() if deep_scan else self._fast_scan()
+            self._is_scanning = True
+            self.abort_scan = False
+            self._deep_scan(scan_start_offset) if deep_scan else self._fast_scan()
+
+            if self.abort_scan:
+                return
             
             self._find_missing_directs()
             self._find_missing_inodes()
+            self._is_scanning = False
                                            
             Logger.log("Finished scanning!")
             Logger.log(f"Total Scan Time: {timedelta(seconds=time.time()-t1)}")
 
             # Save the offsets to files so we don't have to go through the entire disk again
-            self._save_scan_to_files(loadpath)
+            self._save_scan_to_files(loadpath, True)
 
     
-    def _deep_scan(self):
+    def _deep_scan(self, start_offset = 0x0):
+        Logger.log(f"Deep Scan beginning at: 0x{start_offset:X}")
         drive_length = self._stream.getLength()
-        for offset in range(0, drive_length, self._superblock.fsize):
+        if start_offset != 0:
+            start_offset = (start_offset + self._superblock.fsize) & ~(self._superblock.fsize - 1)
+            Logger.log(f"Percent Complete: {round((start_offset/drive_length)*100,2)}%")
+        for offset in range(start_offset, drive_length, self._superblock.fsize):
+            if self.abort_scan:
+                return
             self._stream.seek(offset)
             # test for directories
             direct_check = self._stream.read(0x18)
@@ -243,6 +260,7 @@ class Scanner:
                         
             if (offset & 0xfffffff) == 0:
                 Logger.log(f"Percent Complete: {round((offset/drive_length)*100,2)}%")
+                self._save_scan_to_files(self._loadpath)
 
     def _fast_scan(self):
         inode_block_offset = self._superblock.iblkno * self._superblock.fsize
@@ -251,6 +269,8 @@ class Scanner:
         data_block_length = (cgsize - data_block_offset) + 0x14000
 
         for cyl in range(self._superblock.ncg):
+            if self.abort_scan:
+                return
             cyl_offset = (self._superblock.fpg * self._superblock.fsize) * cyl
             Logger.log(f"Scanning cylinder group: {cyl}/{self._superblock.ncg}: 0x{cyl_offset:X}")
  
@@ -344,20 +364,30 @@ class Scanner:
         # into the inodes_found and directs_found variables
         Logger.log(f"Loading from files at: {loadpath}")
         inodes_list = []
-        with open(loadpath + '\\inodes.txt', 'r') as fp:
+        with open(os.path.normpath(loadpath + '\\inodes.txt'), 'r') as fp:
             inodes_list = fp.readlines()
         directories = []
-        with open(loadpath + '\\directories.txt', 'r') as fp:
+        with open(os.path.normpath(loadpath + '\\directories.txt'), 'r') as fp:
             directories = fp.readlines()
         directs = []
-        with open(loadpath + '\\directs.txt', 'r') as fp:
+        with open(os.path.normpath(loadpath + '\\directs.txt'), 'r') as fp:
             directs = fp.readlines()
 
         # Not really
         max_file_length = self._stream.getLength()
 
+        last_read_offset = 0
+
+        inodes_complete = False
+        directories_complete = False
+        directs_complete = False
+
         for line in inodes_list:
+            if line == 'end':
+                inodes_complete = True
+                break
             offset = int(line.strip())
+            last_read_offset = offset
             self._stream.seek(offset)
             data = self._stream.read(0x100)
             inode = self.inode_class.from_buffer(bytearray(data))
@@ -365,33 +395,54 @@ class Scanner:
             self.scan_results.add_inode(inode)
 
         for line in directories:
+            if line == 'end':
+                directories_complete = True
+                break
             offset = int(line.strip())
             self._stream.seek(offset)
             directory = self._read_directory(offset)
             self.scan_results.add_directory(directory)
 
         for line in directs:
+            if line == 'end':
+                directs_complete = True
+                break
             offset = int(line.strip())
             direct = self._read_direct(offset)
             self.scan_results.add_direct(direct)
+            if offset > last_read_offset:
+                last_read_offset = offset
 
         # This needs to be called right now to parent directs to directories that extend beyond a block
         self._find_missing_directs()
 
-    def _save_scan_to_files(self, loadpath):
+        # Pick up at the last read offset in case this was a partially completed scan
+        # Doesn't work for fast scan
+        if not inodes_complete or not directories_complete or not directs_complete:
+            Logger.log(f"Resuming Deep Scan at the last offset in case of partial scan...")
+            self.scan(loadpath, True, last_read_offset)
+
+    def _save_scan_to_files(self, loadpath, completed_scan = False):
         loadpath = os.path.normpath(loadpath + "\\")
         if not os.path.exists(loadpath):
             os.mkdir(loadpath)
-        with open(loadpath + 'inodes.txt', 'w') as fp:
+        with open(os.path.normpath(loadpath + '\\inodes.txt'), 'w') as fp:
             for inode in self.scan_results.inode_map:
                 fp.write(f"{inode}\n")
-        with open(loadpath + 'directs.txt', 'w') as fp:
+            if completed_scan:
+                fp.write("end")
+        with open(os.path.normpath(loadpath + '\\directs.txt'), 'w') as fp:
             for direct in self.scan_results.directs_map:
                 fp.write(f"{direct}\n")
-        with open(loadpath + 'directories.txt', 'w') as fp:
+            if completed_scan:
+                fp.write("end")
+        with open(os.path.normpath(loadpath + '\\directories.txt'), 'w') as fp:
             for directory in self.scan_results.directory_map:
                 fp.write(f"{directory}\n")
-        Logger.log(f"Saved scan files to: {loadpath}")
+            if completed_scan:
+                fp.write("end")
+        if not self._is_scanning:
+            Logger.log(f"Saved scan files to: {loadpath}")
 
     def _read_directory(self, directory_offset, start_of_directory=True, skip_active=True):
         directory = Directory(directory_offset)
